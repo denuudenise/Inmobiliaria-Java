@@ -40,12 +40,17 @@ public final class AgencyApp extends Application {
     public void start(Stage stage) {
         this.stage = stage;
         stage.setTitle("Nuevo Hogar · Gestión inmobiliaria");
-        Scene scene = new Scene(root, 1320, 860);
+        javafx.geometry.Rectangle2D screen = Screen.getPrimary().getVisualBounds();
+        Scene scene = new Scene(
+                root,
+                Math.min(1320, screen.getWidth()),
+                Math.min(860, screen.getHeight()));
         scene.getStylesheets()
                 .add(Objects.requireNonNull(getClass().getResource("/theme.css")).toExternalForm());
         stage.setScene(scene);
-        stage.setMinWidth(1000);
-        stage.setMinHeight(700);
+        stage.setMinWidth(Math.min(1000, screen.getWidth()));
+        stage.setMinHeight(Math.min(620, screen.getHeight()));
+        stage.setMaximized(true);
         root.setCenter(new Label("Preparando Nuevo Hogar…"));
         stage.show();
         javafx.concurrent.Task<AgencyService> init =
@@ -688,7 +693,7 @@ public final class AgencyApp extends Application {
         filter.text("capacity", "Capacidad mínima", "0");
         Map<Integer, CheckBox> features = featureChecks(Set.of());
         FlowPane cards = new FlowPane(18, 18);
-        Label count = label("", "subtitle");
+        Label count = label("", "catalog-result-count");
         Runnable search =
                 () -> {
                     BigDecimal max =
@@ -716,7 +721,7 @@ public final class AgencyApp extends Application {
                                     checked(features));
                     cards.getChildren().clear();
                     count.setText(rows.size() + " propiedades encontradas");
-                    for (Row p : rows) cards.getChildren().add(propertyCard(p));
+                    for (Row p : rows) cards.getChildren().add(propertyCard(p, operation));
                     if (rows.isEmpty())
                         cards.getChildren()
                                 .add(
@@ -732,8 +737,12 @@ public final class AgencyApp extends Application {
         TitledPane advanced =
                 new TitledPane("Características", flow(features.values().toArray(Node[]::new)));
         advanced.setExpanded(false);
+        HBox resultsTitle = new HBox(12,
+                label("Propiedades destacadas", "catalog-section-title"),
+                count);
+        resultsTitle.setAlignment(Pos.CENTER_LEFT);
         content.getChildren()
-                .addAll(card(filter, advanced, button("Buscar propiedades", search)), count, cards);
+                .addAll(card(filter, advanced, button("Buscar propiedades", search)), resultsTitle, cards);
         search.run();
     }
 
@@ -756,165 +765,227 @@ public final class AgencyApp extends Application {
         return s;
     }
 
-    private Node propertyVisual(Row p, double width, double height) {
-        for (Row a : service.attachments(p.id("id_propiedad"), false))
-            if (a.text("tipo").equals("Imagen")) {
-                Path file = service.attachmentPath(p.id("id_propiedad"), a.id("id"), false);
-                if (Files.exists(file)) {
-                    Image image = new Image(file.toUri().toString(), width, height, true, true);
-                    if (!image.isError()) {
-                        ImageView v = new ImageView(image);
-                        v.setFitWidth(width);
-                        v.setFitHeight(height);
-                        v.setPreserveRatio(true);
-                        return v;
-                    }
-                }
-            }
-        return house(width, height, p.id("id_propiedad"));
+    private List<Path> propertyImagePaths(Row property) {
+        return service.attachments(property.id("id_propiedad"), false).stream()
+                .filter(file -> file.text("tipo").equals("Imagen"))
+                .map(file -> service.attachmentPath(property.id("id_propiedad"), file.id("id"), false))
+                .filter(Files::isRegularFile)
+                .toList();
     }
 
-    private VBox propertyCard(Row p) {
-        int id = p.id("id_propiedad");
-        VBox v = new VBox(12);
-        v.getStyleClass().add("property-card");
-        v.setPrefWidth(255);
-        v.setMaxWidth(255);
-        VBox text =
-                new VBox(
-                        9,
-                        label(p.text("tipo") + " · " + p.text("comercial"), "badge"),
-                        label(p.text("titulo"), "section-title"),
-                        label(p.text("localidad"), "subtitle"),
-                        label(
-                                p.text("dormitorios")
-                                        + " dormitorios   ·   "
-                                        + p.text("superficie_total_m2")
-                                        + " m²",
-                                "footer"));
-        text.setPadding(new Insets(0, 15, 0, 15));
-        for (Row o : service.offers(id))
-            text.getChildren()
-                    .add(
-                            label(
-                                    o.text("operacion")
-                                            + " · "
-                                            + o.text("moneda")
-                                            + " "
-                                            + o.text("precio"),
-                                    "price"));
-        Button details = button("Ver propiedad", () -> propertyDetails(id));
+    private Node photoFrame(Path path, double width, double height) {
+        Image image = new Image(path.toUri().toString());
+        if (image.isError()) return house(width, height, path.hashCode());
+        ImageView view = new ImageView(image);
+        double scale = Math.max(width / image.getWidth(), height / image.getHeight());
+        view.setFitWidth(image.getWidth() * scale);
+        view.setFitHeight(image.getHeight() * scale);
+        view.setPreserveRatio(true);
+        view.setSmooth(true);
+        StackPane frame = new StackPane(view);
+        frame.setMinSize(width, height);
+        frame.setPrefSize(width, height);
+        frame.setMaxSize(width, height);
+        Rectangle clip = new Rectangle(width, height);
+        clip.setArcWidth(12);
+        clip.setArcHeight(12);
+        frame.setClip(clip);
+        frame.getStyleClass().add("property-photo-frame");
+        return frame;
+    }
+
+    private Node propertyVisual(Row property, double width, double height) {
+        List<Path> photos = propertyImagePaths(property);
+        return photos.isEmpty()
+                ? house(width, height, property.id("id_propiedad"))
+                : photoFrame(photos.getFirst(), width, height);
+    }
+
+    private Node propertyGallery(Row property, double width, double height) {
+        List<Path> photos = propertyImagePaths(property);
+        StackPane main = new StackPane();
+        main.setPrefSize(width, height);
+        main.setMinSize(width, height);
+        main.setMaxSize(width, height);
+        main.getStyleClass().add("detail-gallery-main");
+        if (photos.isEmpty()) {
+            Label empty = label("FOTOGRAFÍAS PENDIENTES", "photo-empty-badge");
+            main.getChildren().addAll(house(width, height, property.id("id_propiedad")), empty);
+            StackPane.setAlignment(empty, Pos.TOP_LEFT);
+            StackPane.setMargin(empty, new Insets(14));
+        } else {
+            main.getChildren().add(photoFrame(photos.getFirst(), width, height));
+        }
+        HBox thumbnails = new HBox(9);
+        thumbnails.getStyleClass().add("property-thumbnails");
+        for (Path photo : photos.stream().limit(6).toList()) {
+            StackPane thumbnail = new StackPane(photoFrame(photo, 92, 64));
+            thumbnail.getStyleClass().add("property-thumbnail");
+            thumbnail.setOnMouseClicked(e -> main.getChildren().setAll(photoFrame(photo, width, height)));
+            thumbnails.getChildren().add(thumbnail);
+        }
+        VBox gallery = new VBox(10, main, thumbnails);
+        gallery.getStyleClass().add("property-gallery");
+        return gallery;
+    }
+
+    private VBox propertyCard(Row property) {
+        return propertyCard(property, 0);
+    }
+
+    private VBox propertyCard(Row property, int operationFilter) {
+        int id = property.id("id_propiedad");
+        List<Row> offers = service.offers(id);
+        Row offer = offers.stream()
+                .filter(row -> operationFilter == 0 || row.id("id_tipo_transaccion") == operationFilter)
+                .findFirst().orElse(offers.isEmpty() ? null : offers.getFirst());
+        String operation = offer == null ? "Consultar" : offer.text("operacion");
+
+        StackPane image = new StackPane(propertyVisual(property, 258, 164));
+        image.setPrefSize(258, 164);
+        image.setMinSize(258, 164);
+        image.setMaxSize(258, 164);
+        Label badge = label(operation.equalsIgnoreCase("Alquiler") ? "Alquiler" : "Venta", "property-operation-badge");
+        StackPane.setAlignment(badge, Pos.TOP_LEFT);
+        StackPane.setMargin(badge, new Insets(12));
+        image.getChildren().add(badge);
+
+        Label title = label(property.text("titulo"), "property-card-title");
+        title.setMinHeight(42);
+        Label location = label("⌖  " + property.text("localidad"), "property-card-location");
+        HBox facts = new HBox(12,
+                propertyMiniFact("⌂", metric(property, "dormitorios", "")),
+                propertyMiniFact("♧", metric(property, "banos", "")),
+                propertyMiniFact("▧", metric(property, "superficie_total_m2", " m²")));
+        facts.getStyleClass().add("property-card-facts");
+        Label price = label(offer == null ? "Consultar precio" : formatOffer(offer), "property-card-price");
+        Button details = button("Ver detalle  →", () -> propertyDetails(id));
+        details.getStyleClass().add("property-detail-button");
         details.setMaxWidth(Double.MAX_VALUE);
-        text.getChildren().add(details);
-        v.getChildren().addAll(propertyVisual(p, 253, 155), text);
-        return v;
+
+        VBox body = new VBox(8, label(property.text("tipo"), "property-type"), title, location, facts, price, details);
+        body.getStyleClass().add("property-card-body");
+        VBox card = new VBox(0, image, body);
+        card.getStyleClass().add("property-card");
+        card.setPrefWidth(260);
+        card.setMinWidth(260);
+        card.setMaxWidth(260);
+        card.setMinHeight(370);
+        return card;
+    }
+
+    private HBox propertyMiniFact(String icon, String value) {
+        HBox item = new HBox(5, label(icon, "property-fact-icon"), label(value, "property-fact-value"));
+        item.setAlignment(Pos.CENTER_LEFT);
+        return item;
+    }
+
+    private String metric(Row property, String key, String suffix) {
+        String value = property.text(key);
+        if (value.isBlank() || "0".equals(value) || "0.00".equals(value)) return "—";
+        try {
+            return formatNumber(new BigDecimal(value)) + suffix;
+        } catch (NumberFormatException ignored) {
+            return value + suffix;
+        }
+    }
+
+    private String formatOffer(Row offer) {
+        String value = offer.text("moneda") + " " + formatNumber(new BigDecimal(offer.text("precio")));
+        return offer.id("id_tipo_transaccion") == 2 ? value + " / mes" : value;
+    }
+
+    private String formatNumber(BigDecimal value) {
+        java.text.NumberFormat format = java.text.NumberFormat.getNumberInstance(new Locale("es", "AR"));
+        format.setGroupingUsed(true);
+        format.setMaximumFractionDigits(Math.min(2, Math.max(0, value.stripTrailingZeros().scale())));
+        return format.format(value);
     }
 
     private void propertyDetails(int id) {
-        Row p = service.property(id);
-        page(p.text("titulo"), p.text("direccion") + " · " + p.text("localidad"));
-        VBox facts = card(label(p.text("tipo") + " · " + p.text("comercial"), "badge"));
-        for (Row o : service.offers(id))
-            facts.getChildren()
-                    .add(
-                            label(
-                                    o.text("operacion")
-                                            + " · "
-                                            + o.text("moneda")
-                                            + " "
-                                            + o.text("precio"),
-                                    "price"));
-        facts.getChildren()
-                .addAll(
-                        label(
-                                p.text("ambientes")
-                                        + " ambientes · "
-                                        + p.text("dormitorios")
-                                        + " dormitorios · "
-                                        + p.text("banos")
-                                        + " baños\n"
-                                        + p.text("superficie_total_m2")
-                                        + " m² totales · "
-                                        + p.text("superficie_cubierta_m2")
-                                        + " m² cubiertos\nAntigüedad: "
-                                        + p.text("antiguedad_anos")
-                                        + " años · Capacidad: "
-                                        + p.text("capacidad")
-                                        + " personas\nExpensas: "
-                                        + p.text("expensas"),
-                                "subtitle"),
-                        button(
-                                "Contactar / Me interesa",
-                                () -> {
-                                    if (!service.signedIn()) {
-                                        login();
-                                        return;
-                                    }
-                                    if (service.role() != 3) {
-                                        info(
-                                                "Podés vincular un cliente desde Clientes →"
-                                                        + " Intereses.");
-                                        return;
-                                    }
-                                    Form f = new Form();
-                                    f.area(
-                                            "message",
-                                            "Consulta",
-                                            "Me interesa recibir información sobre esta"
-                                                    + " propiedad.");
-                                    dialog(
-                                            "Contactar a la inmobiliaria",
-                                            f,
-                                            "Enviar consulta",
-                                            () -> {
-                                                service.interest(
-                                                        service.current().id("id_usuario"),
-                                                        id,
-                                                        "Interesado",
-                                                        f.value("message"));
-                                                info(
-                                                        "Consulta registrada en tu ficha de"
-                                                                + " intereses.");
-                                            });
-                                }));
+        Row property = service.property(id);
+        List<Row> offers = service.offers(id);
+        List<Row> characteristics = service.features(id);
+        page(property.text("titulo"), property.text("direccion") + " · " + property.text("localidad"));
+
+        Button back = secondary("←  Volver al catálogo", this::catalog);
+        VBox facts = new VBox(14);
+        facts.getStyleClass().add("property-detail-facts");
+        facts.getChildren().addAll(
+                row(label(property.text("tipo"), "property-type"), label(property.text("comercial"), "property-status-badge")),
+                label("⌖  " + property.text("localidad"), "property-detail-location"));
+        for (Row offer : offers) {
+            HBox priceLine = new HBox(12, label(offer.text("operacion"), "property-price-caption"), label(formatOffer(offer), "property-detail-price"));
+            priceLine.setAlignment(Pos.CENTER_LEFT);
+            facts.getChildren().add(priceLine);
+        }
+        HBox specifications = new HBox(12,
+                propertyDetailFact("⌂", metric(property, "dormitorios", ""), "dormitorios"),
+                propertyDetailFact("♧", metric(property, "banos", ""), "baños"),
+                propertyDetailFact("▧", metric(property, "superficie_total_m2", " m²"), "totales"),
+                propertyDetailFact("▧", metric(property, "superficie_cubierta_m2", " m²"), "cubiertos"));
+        facts.getChildren().addAll(specifications,
+                label("Ambientes: " + metric(property, "ambientes", "") + "   ·   Antigüedad: " + metric(property, "antiguedad_anos", " años"), "property-extra-facts"));
+
+        Button contact = button("Contactar", () -> contactProperty(id));
+        contact.getStyleClass().add("property-detail-button");
+        Button favorite = secondary("♡  Guardar", () -> saveFavorite(id));
+        HBox actions = new HBox(10, contact, favorite);
+        facts.getChildren().add(actions);
+
+        HBox hero = new HBox(20, propertyGallery(property, 650, 370), facts);
+        hero.setAlignment(Pos.TOP_LEFT);
         HBox.setHgrow(facts, Priority.ALWAYS);
-        content.getChildren().add(row(propertyVisual(p, 460, 280), facts));
-        content.getChildren()
-                .add(
-                        card(
-                                label("Descripción", "section-title"),
-                                label(p.text("descripcion"), "subtitle"),
-                                label(
-                                        "Características: "
-                                                + String.join(
-                                                        " · ",
-                                                        service.features(id).stream()
-                                                                .map(r -> r.text("etiqueta"))
-                                                                .toList()),
-                                        "subtitle")));
-        if (p.id("id_edificio") > 0)
-            content.getChildren()
-                    .add(
-                            card(
-                                    label(
-                                            "Edificio #"
-                                                    + p.id("id_edificio")
-                                                    + " · Unidad "
-                                                    + p.text("numero_unidad"),
-                                            "section-title")));
-        VBox files = card(label("Fotografías y videos", "section-title"));
-        addFileButtons(files, id, false);
-        content.getChildren().add(files);
+        facts.setMaxWidth(Double.MAX_VALUE);
+        content.getChildren().addAll(back, hero);
+
+        TabPane tabs = new TabPane();
+        Tab description = new Tab("Descripción", label(property.text("descripcion"), "property-description-copy"));
+        FlowPane chips = new FlowPane(8, 8);
+        for (Row characteristic : characteristics)
+            chips.getChildren().add(label(characteristic.text("etiqueta"), "feature-chip"));
+        if (characteristics.isEmpty()) chips.getChildren().add(label("No se especificaron características adicionales.", "subtitle"));
+        Tab features = new Tab("Características", chips);
+        VBox legal = new VBox(9,
+                label("Superficie cubierta: " + metric(property, "superficie_cubierta_m2", " m²"), "subtitle"),
+                label("Superficie total: " + metric(property, "superficie_total_m2", " m²"), "subtitle"),
+                label("Expensas: " + (property.text("expensas").isBlank() || property.text("expensas").equals("0.00") ? "No informadas" : property.text("moneda") + " " + formatNumber(new BigDecimal(property.text("expensas")))), "subtitle"));
+        if (property.id("id_edificio") > 0)
+            legal.getChildren().add(label("Edificio #" + property.id("id_edificio") + " · Unidad " + property.text("numero_unidad"), "subtitle"));
+        Tab details = new Tab("Detalles", legal);
+        for (Tab tab : List.of(description, features, details)) tab.setClosable(false);
+        tabs.getTabs().addAll(description, features, details);
+        tabs.setPrefHeight(220);
+
+        VBox map = new VBox(10, label("Ubicación", "section-title"), mapPreview(),
+                label(property.text("direccion") + "\n" + property.text("localidad"), "property-card-location"),
+                secondary("Ver en el mapa", () -> openMap(property)));
+        map.getStyleClass().add("property-map-card");
+        HBox lower = new HBox(16, tabs, map);
+        HBox.setHgrow(tabs, Priority.ALWAYS);
+        content.getChildren().add(lower);
+
+        List<Row> videos = service.attachments(id, false).stream().filter(file -> file.text("tipo").equals("Video")).toList();
+        if (!videos.isEmpty()) {
+            VBox media = card(label("Videos de la propiedad", "section-title"));
+            for (Row video : videos)
+                media.getChildren().add(secondary(video.text("tipo") + " · Reproducir video", () -> {
+                    Path path = service.attachmentPath(id, video.id("id"), false);
+                    if (!Files.isRegularFile(path)) throw new IllegalArgumentException("El video ya no está disponible.");
+                    getHostServices().showDocument(path.toUri().toString());
+                }));
+            content.getChildren().add(media);
+        }
         if (service.signedIn()
                 && (service.role() != 3
-                        || p.id("id_propietario") == service.current().id("id_usuario"))) {
+                        || property.id("id_propietario") == service.current().id("id_usuario"))) {
             VBox docs = card(label("Documentación privada", "section-title"));
             addFileButtons(docs, id, true);
             content.getChildren()
                     .addAll(
                             docs,
                             row(
-                                    button("Editar ficha", () -> propertyForm(p)),
+                                    button("Editar ficha", () -> propertyForm(property)),
                                     secondary("Adjuntar archivos", () -> upload(id))));
             if (service.role() != 3)
                 content.getChildren()
@@ -928,6 +999,59 @@ public final class AgencyApp extends Application {
                                         "motivo",
                                         "Motivo"));
         }
+    }
+
+    private HBox propertyDetailFact(String icon, String value, String caption) {
+        VBox text = new VBox(2, label(value, "property-detail-fact-value"), label(caption, "property-detail-fact-label"));
+        HBox box = new HBox(8, label(icon, "property-detail-fact-icon"), text);
+        box.setAlignment(Pos.CENTER_LEFT);
+        box.getStyleClass().add("property-detail-fact");
+        HBox.setHgrow(box, Priority.ALWAYS);
+        return box;
+    }
+
+    private Pane mapPreview() {
+        Pane map = new Pane();
+        map.setPrefSize(270, 142);
+        map.setMinSize(220, 142);
+        map.getStyleClass().add("map-preview");
+        for (int i = 0; i < 4; i++) {
+            javafx.scene.shape.Line road = new javafx.scene.shape.Line(0, 25 + i * 34, 280, 4 + i * 34);
+            road.setStroke(Color.web("#ffffff")); road.setStrokeWidth(8); map.getChildren().add(road);
+        }
+        for (int i = 0; i < 3; i++) {
+            javafx.scene.shape.Line cross = new javafx.scene.shape.Line(35 + i * 95, 0, 70 + i * 82, 150);
+            cross.setStroke(Color.web("#ffffff")); cross.setStrokeWidth(6); map.getChildren().add(cross);
+        }
+        Circle pin = new Circle(137, 67, 12, Color.web("#327994"));
+        pin.setStroke(Color.WHITE); pin.setStrokeWidth(4); map.getChildren().add(pin);
+        return map;
+    }
+
+    private void openMap(Row property) {
+        String query = java.net.URLEncoder.encode(property.text("direccion") + ", " + property.text("localidad"), java.nio.charset.StandardCharsets.UTF_8);
+        getHostServices().showDocument("https://www.google.com/maps/search/?api=1&query=" + query);
+    }
+
+    private void contactProperty(int id) {
+        if (!service.signedIn()) { login(); return; }
+        if (service.role() != 3) {
+            info("Podés vincular un cliente desde Clientes → Intereses.");
+            return;
+        }
+        Form form = new Form();
+        form.area("message", "Consulta", "Me interesa recibir información sobre esta propiedad.");
+        dialog("Contactar a la inmobiliaria", form, "Enviar consulta", () -> {
+            service.interest(service.current().id("id_usuario"), id, "Interesado", form.value("message"));
+            info("Tu consulta quedó registrada. El equipo se pondrá en contacto con vos.");
+        });
+    }
+
+    private void saveFavorite(int id) {
+        if (!service.signedIn()) { login(); return; }
+        if (service.role() != 3) { info("Iniciá sesión como cliente para guardar propiedades."); return; }
+        service.interest(service.current().id("id_usuario"), id, "Interesado", "Guardada desde favoritos.");
+        info("Propiedad agregada a tus intereses.");
     }
 
     private void addFileButtons(VBox box, int id, boolean docs) {

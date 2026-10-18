@@ -94,3 +94,47 @@
 .admin-card .button { -fx-background-radius: 7; }
 .admin-card .secondary { -fx-background-color: #e9f0ed; }
 .admin-welcome .secondary { -fx-background-color: rgba(255,255,255,.75); -fx-text-fill: #275b70; }
+
+/* Catálogo y ficha pública de propiedades */
+.catalog-section-title { -fx-font-family: "Georgia"; -fx-font-size: 23px; -fx-font-weight: bold; -fx-text-fill: #204d63; }
+.catalog-result-count { -fx-background-color: #e7efea; -fx-background-radius: 15; -fx-padding: 6 11; -fx-text-fill: #4e6c6f; -fx-font-size: 11px; }
+.hero { -fx-background-color: linear-gradient(to right, #e0ebe5, #f1e8d9); -fx-border-color: #e0e0d6; -fx-border-radius: 14; -fx-border-width: 1; -fx-padding: 28 32; -fx-spacing: 28; }
+.hero .page-title { -fx-font-size: 31px; -fx-line-spacing: 2px; }
+.hero .subtitle { -fx-text-fill: #566f78; -fx-font-size: 14px; }
+.property-card { -fx-background-color: #fffdf8; -fx-background-radius: 12; -fx-border-color: #e5e1d8; -fx-border-radius: 12; -fx-padding: 0; -fx-effect: dropshadow(gaussian, rgba(31,66,77,.10), 12, 0, 0, 3); }
+.property-card:hover { -fx-border-color: #a9c4c5; -fx-effect: dropshadow(gaussian, rgba(31,66,77,.17), 16, 0, 0, 5); }
+.property-card-body { -fx-padding: 14; -fx-spacing: 8; }
+.property-operation-badge { -fx-background-color: rgba(255,253,248,.96); -fx-background-radius: 14; -fx-padding: 6 11; -fx-text-fill: #24576c; -fx-font-size: 11px; -fx-font-weight: bold; -fx-effect: dropshadow(gaussian, rgba(25,51,57,.12), 5, 0, 0, 1); }
+.property-type { -fx-text-fill: #638078; -fx-font-size: 10px; -fx-font-weight: bold; }
+.property-card-title { -fx-font-family: "Segoe UI"; -fx-font-size: 15px; -fx-font-weight: bold; -fx-text-fill: #234d63; -fx-wrap-text: true; }
+.property-card-location { -fx-text-fill: #71828a; -fx-font-size: 11px; }
+.property-card-facts { -fx-padding: 4 0 2 0; -fx-alignment: center-left; }
+.property-fact-icon { -fx-text-fill: #537985; -fx-font-size: 13px; }
+.property-fact-value { -fx-text-fill: #566e77; -fx-font-size: 11px; }
+.property-card-price { -fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: #205c77; -fx-padding: 2 0 1 0; }
+.property-detail-button { -fx-background-color: #2f718f; -fx-background-radius: 7; -fx-font-size: 12px; -fx-font-weight: bold; -fx-padding: 10 14; }
+.property-detail-button:hover { -fx-background-color: #235b75; }
+.property-photo-frame { -fx-background-color: #e6ebe6; -fx-background-radius: 11; }
+.detail-gallery-main { -fx-background-color: #e6ebe6; -fx-background-radius: 12; -fx-border-color: #e1e1d8; -fx-border-radius: 12; }
+.photo-empty-badge { -fx-background-color: rgba(30,66,83,.82); -fx-background-radius: 6; -fx-padding: 7 10; -fx-text-fill: white; -fx-font-size: 10px; -fx-font-weight: bold; }
+.property-thumbnails { -fx-padding: 0 2; }
+.property-thumbnail { -fx-background-color: #fffdf8; -fx-background-radius: 9; -fx-border-color: #dddcd4; -fx-border-radius: 9; -fx-padding: 3; -fx-cursor: hand; }
+.property-thumbnail:hover { -fx-border-color: #2f718f; }
+.property-detail-facts { -fx-background-color: #fffdf8; -fx-background-radius: 12; -fx-border-color: #e5e1d8; -fx-border-radius: 12; -fx-padding: 22; -fx-spacing: 14; -fx-effect: dropshadow(gaussian, rgba(31,66,77,.07), 10, 0, 0, 2); }
+.property-status-badge { -fx-background-color: #e3efe7; -fx-background-radius: 14; -fx-padding: 6 10; -fx-text-fill: #357054; -fx-font-size: 10px; -fx-font-weight: bold; }
+.property-detail-location { -fx-text-fill: #6d7f85; -fx-font-size: 12px; }
+.property-price-caption { -fx-text-fill: #718187; -fx-font-size: 12px; }
+.property-detail-price { -fx-text-fill: #205c77; -fx-font-family: "Georgia"; -fx-font-size: 23px; -fx-font-weight: bold; }
+.property-detail-fact { -fx-background-color: #f4f6f1; -fx-background-radius: 9; -fx-padding: 10 9; }
+.property-detail-fact-icon { -fx-background-color: #e2ecea; -fx-background-radius: 18; -fx-min-width: 34; -fx-min-height: 34; -fx-alignment: center; -fx-text-fill: #356b7d; -fx-font-size: 15px; }
+.property-detail-fact-value { -fx-text-fill: #244e63; -fx-font-size: 14px; -fx-font-weight: bold; }
+.property-detail-fact-label { -fx-text-fill: #718286; -fx-font-size: 10px; }
+.property-extra-facts { -fx-text-fill: #718187; -fx-font-size: 11px; }
+.property-description-copy { -fx-text-fill: #526b74; -fx-font-size: 13px; -fx-wrap-text: true; -fx-padding: 18; }
+.feature-chip { -fx-background-color: #e9f0eb; -fx-background-radius: 14; -fx-padding: 8 12; -fx-text-fill: #386577; -fx-font-size: 11px; }
+.property-map-card { -fx-background-color: #fffdf8; -fx-background-radius: 12; -fx-border-color: #e5e1d8; -fx-border-radius: 12; -fx-padding: 15; -fx-spacing: 9; -fx-pref-width: 300; }
+.map-preview { -fx-background-color: #dce8e0; -fx-background-radius: 10; }
+.property-gallery { -fx-spacing: 10; }
+.tab-pane { -fx-background-color: #fffdf8; -fx-background-radius: 11; -fx-border-color: #e5e1d8; -fx-border-radius: 11; -fx-padding: 8; }
+.tab-pane .tab-header-area .tab-header-background { -fx-background-color: #f0f3ee; -fx-background-radius: 8 8 0 0; }
+.tab-pane .tab:selected { -fx-background-color: #fffdf8; }
