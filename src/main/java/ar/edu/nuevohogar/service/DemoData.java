@@ -13,7 +13,7 @@ public final class DemoData {
     public static void seed(Database db) {
         if (!db.demo || !new JdbcDao(db).list("SELECT id_usuario FROM usuarios").isEmpty()) return;
         AgencyService s = new AgencyService(db);
-        s.bootstrapAdmin(user("Ana", "Suárez", "10000001", "admin@nuevohogar.demo"), PASSWORD);
+        s.bootstrapAdmin(user("Admin", "Sistema", "10000001", "admin@nuevohogar.demo"), PASSWORD);
         s.login("admin@nuevohogar.demo", PASSWORD);
         int agent =
                 s.createStaffUser(
@@ -22,6 +22,7 @@ public final class DemoData {
                         2);
         int client =
                 s.register(user("Juan", "Pérez", "10000003", "cliente@nuevohogar.demo"), PASSWORD);
+        s.saveClient(client, Set.of("Propietario", "Comprador"), agent);
         s.building("Edificio del Parque", "Av. Maipú 1250", "Vicente López");
         String[] titles = {
             "Casa con jardín en Los Robles",

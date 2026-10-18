@@ -1,6 +1,8 @@
 package ar.edu.nuevohogar.ui;
 
 import ar.edu.nuevohogar.dao.Database;
+import ar.edu.nuevohogar.dao.AdminDashboardDao;
+import ar.edu.nuevohogar.model.AdminDashboardData;
 import ar.edu.nuevohogar.model.Row;
 import ar.edu.nuevohogar.service.*;
 
@@ -93,10 +95,109 @@ public final class AgencyApp extends Application {
                         label("Tu próximo hogar, está aquí", "footer"));
         Region gap = new Region();
         HBox.setHgrow(gap, Priority.ALWAYS);
-        header.getChildren().addAll(brand, gap, button("Catálogo", this::catalog));
+        header.getChildren().addAll(brand, gap);
+        if (!service.signedIn()) {
+            header.getChildren()
+                    .addAll(
+                            navButton("Inicio", this::catalog),
+                            navButton("Comprar", () -> catalog(1)),
+                            navButton("Alquilar", () -> catalog(2)),
+                            navButton("Vender", this::register),
+                            secondary("Iniciar sesión", this::login),
+                            button("Registrarme", this::register));
+            root.setTop(header);
+            root.setLeft(null);
+            return;
+        }
+        if (service.role() == 3) {
+            header.getChildren()
+                    .addAll(
+                            navButton("Inicio", this::catalog),
+                            navButton("Comprar", () -> catalog(1)),
+                            navButton("Alquilar", () -> catalog(2)),
+                            navButton("Vender", () -> propertyForm(null)),
+                            navButton("Mis solicitudes", this::requests));
+            MenuButton account = new MenuButton("Mi cuenta  ▾");
+            account.getStyleClass().add("account-menu");
+            MenuItem profileItem = new MenuItem("Mi perfil");
+            MenuItem propertiesItem = new MenuItem("Mis propiedades");
+            MenuItem requestsItem = new MenuItem("Mis solicitudes");
+            MenuItem interestsItem = new MenuItem("Mis intereses");
+            MenuItem preferencesItem = new MenuItem("Mi búsqueda");
+            MenuItem logoutItem = new MenuItem("Cerrar sesión");
+            profileItem.setOnAction(e -> safe(this::profile));
+            propertiesItem.setOnAction(e -> safe(this::propertyList));
+            requestsItem.setOnAction(e -> safe(this::requests));
+            interestsItem.setOnAction(
+                    e -> safe(() -> interests(service.current().id("id_usuario"))));
+            preferencesItem.setOnAction(
+                    e -> safe(() -> preferences(service.current().id("id_usuario"))));
+            logoutItem.setOnAction(
+                    e -> {
+                        service.logout();
+                        shell();
+                        catalog();
+                    });
+            account.getItems()
+                    .addAll(
+                            profileItem,
+                            propertiesItem,
+                            requestsItem,
+                            interestsItem,
+                            preferencesItem,
+                            new SeparatorMenuItem(),
+                            logoutItem);
+            header.getChildren().add(account);
+            root.setTop(header);
+            root.setLeft(null);
+            return;
+        }
+        if (service.role() == 1) {
+            header.getChildren().addAll(
+                    navButton("Catálogo", this::catalog),
+                    label("◉", "admin-avatar"),
+                    new VBox(2, label("Admin", "admin-name"), label("Administrador", "admin-caption")),
+                    secondary("Notificaciones", this::notifications),
+                    button("Cerrar sesión", () -> {
+                        service.logout();
+                        shell();
+                        catalog();
+                    }));
+            root.setTop(header);
+            VBox nav = new VBox(9);
+            nav.setPrefWidth(238);
+            nav.getStyleClass().add("sidebar");
+            nav.getChildren().addAll(
+                    label("NUEVO HOGAR", "admin-side-brand"),
+                    label("PANEL DE ADMINISTRACIÓN", "admin-side-caption"),
+                    adminNav("⌂", "Inicio", this::dashboard, true),
+                    label("GESTIÓN", "admin-side-caption"),
+                    adminNav("▤", "Clientes", this::clients, false),
+                    adminNav("⌂", "Propiedades", this::propertyList, false),
+                    adminNav("◷", "Solicitudes de carga", this::requests, false),
+                    adminNav("↔", "Ventas y alquileres", this::operations, false),
+                    adminNav("♙", "Agentes", this::agents, false),
+                    adminNav("♧", "Usuarios", this::users, false),
+                    label("SISTEMA", "admin-side-caption"),
+                    adminNav("▥", "Reportes", this::reports, false),
+                    adminNav("♧", "Notificaciones", this::notifications, false),
+                    adminNav("▤", "Propietarios y convenios", this::agreements, false),
+                    adminNav("⌂", "Edificios y unidades", this::buildings, false),
+                    adminNav("⚙", "Configuración", this::settings, false));
+            Region spacer = new Region();
+            VBox.setVgrow(spacer, Priority.ALWAYS);
+            nav.getChildren().addAll(spacer, label("Gestioná y hacé crecer\nla inmobiliaria.", "admin-side-foot"));
+            ScrollPane navScroll = new ScrollPane(nav);
+            navScroll.setFitToWidth(true);
+            navScroll.setPrefWidth(238);
+            navScroll.setStyle("-fx-background-color: #163d53;");
+            root.setLeft(navScroll);
+            return;
+        }
         if (service.signedIn()) {
             header.getChildren()
                     .addAll(
+                            navButton("Catálogo", this::catalog),
                             button("Mi perfil", this::profile),
                             label(
                                     service.current().text("nombre") + " · " + roleName(),
@@ -108,11 +209,7 @@ public final class AgencyApp extends Application {
                                         shell();
                                         catalog();
                                     }));
-        } else
-            header.getChildren()
-                    .addAll(
-                            secondary("Iniciar sesión", this::login),
-                            button("Registrarme", this::register));
+        }
         root.setTop(header);
         if (!service.signedIn()) {
             root.setLeft(null);
@@ -167,7 +264,7 @@ public final class AgencyApp extends Application {
 
     private String roleName() {
         return switch (service.role()) {
-            case 1 -> "Administrador";
+            case 1 -> "Admin";
             case 2 -> "Agente";
             case 3 -> "Cliente";
             default -> "Invitado";
@@ -195,6 +292,26 @@ public final class AgencyApp extends Application {
         Button b = button(text, action);
         b.getStyleClass().add("secondary");
         return b;
+    }
+
+    private Button navButton(String text, Runnable action) {
+        Button b = button(text, action);
+        b.getStyleClass().add("nav-link");
+        return b;
+    }
+
+    private Button adminNav(String icon, String text, Runnable action, boolean active) {
+        Button button = new Button(icon + "    " + text);
+        button.getStyleClass().add("admin-nav-item");
+        if (active) button.getStyleClass().add("active");
+        button.setOnAction(e -> {
+            if (root.getLeft() instanceof ScrollPane scroll && scroll.getContent() instanceof VBox menu)
+                for (Node node : menu.getChildren())
+                    if (node instanceof Button item) item.getStyleClass().remove("active");
+            button.getStyleClass().add("active");
+            safe(action);
+        });
+        return button;
     }
 
     private void safe(Runnable action) {
@@ -538,8 +655,16 @@ public final class AgencyApp extends Application {
     }
 
     private void catalog() {
+        catalog(0);
+    }
+
+    private void catalog(int operationFilter) {
         page(
-                "Encontrá la propiedad que estás buscando",
+                operationFilter == 1
+                        ? "Propiedades en venta"
+                        : operationFilter == 2
+                                ? "Propiedades en alquiler"
+                                : "Encontrá la propiedad que estás buscando",
                 "Casas, departamentos y terrenos. Un lugar para cada nueva etapa.");
         HBox hero =
                 row(
@@ -555,7 +680,8 @@ public final class AgencyApp extends Application {
         Form filter = new Form(4);
         filter.text("q", "Buscar por título, dirección o localidad", "");
         filter.rows("type", "Tipo de propiedad", service.lookup("tipos_propiedad"), 0, true);
-        filter.rows("operation", "Operación", service.lookup("tipos_transaccion"), 0, true);
+        filter.rows(
+                "operation", "Operación", service.lookup("tipos_transaccion"), operationFilter, true);
         filter.text("max", "Precio máximo (opcional)", "");
         filter.choice("currency", "Moneda del precio máximo", "USD", "USD", "ARS");
         filter.text("beds", "Dormitorios mínimos", "0");
@@ -872,6 +998,10 @@ public final class AgencyApp extends Application {
     }
 
     private void dashboard() {
+        if (service.role() == 1) {
+            adminDashboard();
+            return;
+        }
         List<Row> properties = service.allProperties();
         List<Row> requests = service.requests();
         page(
@@ -1003,6 +1133,128 @@ public final class AgencyApp extends Application {
                                             activity, "fecha", "Fecha", "usuario", "Usuario",
                                             "accion", "Acción", "detalle", "Detalle")));
         }
+    }
+
+    private void adminDashboard() {
+        AdminDashboardData data = new AdminDashboardDao(service.db).load();
+        page("¡Hola, Admin!", "Resumen general del sistema · "
+                + LocalDate.now().format(DateTimeFormatter.ofPattern("d 'de' MMMM 'de' yyyy", new Locale("es", "AR"))));
+
+        HBox welcome = new HBox(20);
+        welcome.getStyleClass().add("admin-welcome");
+        welcome.setAlignment(Pos.CENTER_LEFT);
+        VBox welcomeText = new VBox(7,
+                label("Controlá la inmobiliaria desde un solo lugar", "admin-welcome-title"),
+                label("Revisá solicitudes, seguí la cartera y gestioná el equipo.", "admin-welcome-copy"));
+        Region stretch = new Region(); HBox.setHgrow(stretch, Priority.ALWAYS);
+        welcome.getChildren().addAll(welcomeText, stretch,
+                button("Revisar solicitudes  →", this::requests),
+                secondary("Agregar usuario", () -> newUser(true)));
+        content.getChildren().add(welcome);
+
+        FlowPane metrics = new FlowPane(14, 14);
+        metrics.getStyleClass().add("admin-metrics");
+        metrics.getChildren().addAll(
+                adminMetric("♙", "Clientes registrados", data.clients(), "Personas en la cartera", "blue"),
+                adminMetric("▤", "Solicitudes pendientes", data.pendingRequests(), "Requieren revisión", "gold"),
+                adminMetric("↗", "Operaciones cerradas", data.closedOperations(), "Ventas y alquileres", "blue"),
+                adminMetric("⌂", "Alquileres activos", data.rentedProperties(), "Propiedades alquiladas", "violet"),
+                adminMetric("♙", "Agentes activos", data.agents(), "" + data.totalUsers() + " usuarios activos", "teal"));
+        content.getChildren().add(metrics);
+
+        PieChart types = new PieChart();
+        data.propertyTypes().forEach((name, count) -> {
+            if (count > 0) types.getData().add(new PieChart.Data(name + " · " + count, count));
+        });
+        types.setTitle("Propiedades por tipo");
+        types.setLegendVisible(true);
+        types.setLabelsVisible(false);
+        types.setPrefHeight(250);
+        VBox typeCard = card(label("Cartera por tipo", "section-title"), types);
+        typeCard.getStyleClass().add("admin-card");
+
+        VBox states = new VBox(12,
+                label("Estado de las propiedades", "section-title"),
+                label(data.totalProperties() + " inmuebles registrados · " + data.publishedProperties() + " aprobados", "admin-summary-note"));
+        for (Map.Entry<String, Long> entry : data.propertyStates().entrySet()) {
+            HBox line = new HBox(10);
+            line.setAlignment(Pos.CENTER_LEFT);
+            Label name = label(entry.getKey(), "admin-state-name");
+            name.setMinWidth(160);
+            ProgressBar bar = new ProgressBar(data.totalProperties() == 0 ? 0 : (double) entry.getValue() / data.totalProperties());
+            bar.setMaxWidth(Double.MAX_VALUE); HBox.setHgrow(bar, Priority.ALWAYS);
+            line.getChildren().addAll(name, bar, label("" + entry.getValue(), "admin-state-count"));
+            states.getChildren().add(line);
+        }
+        states.getChildren().addAll(new Separator(),
+                label("" + data.pendingProperties() + " pendientes de verificación  ·  "
+                        + data.rejectedProperties() + " rechazadas", "admin-summary-note"));
+        VBox stateCard = card(states);
+        stateCard.getStyleClass().add("admin-card");
+
+        VBox team = new VBox(12, label("Agentes y carga", "section-title"));
+        TableView<Row> agents = table(data.agentWorkload(), "agente", "Agente", "clientes", "Clientes", "propiedades", "Propiedades");
+        agents.setPrefHeight(245);
+        team.getChildren().addAll(agents, secondary("Ver equipo y usuarios", this::users));
+        VBox teamCard = card(team); teamCard.getStyleClass().add("admin-card");
+        HBox overview = new HBox(16, typeCard, stateCard, teamCard);
+        overview.getStyleClass().add("admin-overview");
+        HBox.setHgrow(typeCard, Priority.ALWAYS); HBox.setHgrow(stateCard, Priority.ALWAYS); HBox.setHgrow(teamCard, Priority.ALWAYS);
+        typeCard.setPrefWidth(290); stateCard.setPrefWidth(330); teamCard.setPrefWidth(360);
+        content.getChildren().add(overview);
+
+        TableView<Row> latestRequests = table(data.latestRequests(),
+                "id_publicacion", "ID", "titulo", "Propiedad", "solicitante", "Solicitante", "fecha", "Fecha", "estado", "Estado");
+        TableView<Row> latestProperties = table(data.latestProperties(),
+                "id_propiedad", "ID", "titulo", "Propiedad", "localidad", "Ubicación", "verificacion", "Publicación", "comercial", "Estado comercial");
+        VBox requestCard = card(label("Solicitudes de publicación", "section-title"), latestRequests,
+                row(button("Ver propiedad", () -> propertyDetails(selected(latestRequests).id("id_propiedad"))),
+                    secondary("Gestionar solicitudes", this::requests)));
+        long requestTotal = data.requestStates().values().stream().mapToLong(Long::longValue).sum();
+        VBox requestStatus = adminBars("Solicitudes por estado", data.requestStates(), requestTotal);
+        requestStatus.setPrefWidth(300);
+        requestStatus.getStyleClass().add("admin-card");
+        requestCard.setPrefWidth(710);
+        HBox requestRow = new HBox(16, requestCard, requestStatus);
+        HBox.setHgrow(requestCard, Priority.ALWAYS);
+        content.getChildren().add(requestRow);
+
+        VBox propertiesCard = card(label("Propiedades recientes", "section-title"), latestProperties,
+                row(button("Ver detalle", () -> propertyDetails(selected(latestProperties).id("id_propiedad"))),
+                    secondary("Ver todas", this::propertyList)));
+        propertiesCard.getStyleClass().add("admin-card");
+        content.getChildren().add(propertiesCard);
+
+        TableView<Row> activity = table(data.recentActivity(),
+                "fecha", "Fecha", "usuario", "Usuario", "accion", "Acción", "entidad", "Área", "detalle", "Detalle");
+        VBox activityCard = card(label("Actividad reciente", "section-title"), activity,
+                secondary("Ver reportes", this::reports));
+        activityCard.getStyleClass().add("admin-card");
+        content.getChildren().add(activityCard);
+    }
+
+    private VBox adminMetric(String icon, String name, long value, String detail, String tone) {
+        HBox header = new HBox(10, label(icon, "admin-metric-icon"), label(name, "admin-metric-name"));
+        header.setAlignment(Pos.CENTER_LEFT);
+        VBox metric = new VBox(8, header, label(Long.toString(value), "admin-metric-value"), label(detail, "admin-metric-detail"));
+        metric.getStyleClass().addAll("admin-metric", "metric-" + tone);
+        metric.setPrefWidth(190);
+        return metric;
+    }
+
+    private VBox adminBars(String title, Map<String, Long> values, long total) {
+        VBox box = new VBox(13, label(title, "section-title"));
+        if (values.isEmpty()) box.getChildren().add(label("Todavía no hay solicitudes.", "admin-summary-note"));
+        for (Map.Entry<String, Long> entry : values.entrySet()) {
+            HBox row = new HBox(9);
+            row.setAlignment(Pos.CENTER_LEFT);
+            Label name = label(entry.getKey(), "admin-state-name"); name.setMinWidth(95);
+            ProgressBar bar = new ProgressBar(total == 0 ? 0 : (double) entry.getValue() / total);
+            bar.setMaxWidth(Double.MAX_VALUE); HBox.setHgrow(bar, Priority.ALWAYS);
+            row.getChildren().addAll(name, bar, label(Long.toString(entry.getValue()), "admin-state-count"));
+            box.getChildren().add(row);
+        }
+        return box;
     }
 
     private static VBox stat(String name, long value) {
@@ -1347,7 +1599,7 @@ public final class AgencyApp extends Application {
         Form f = userForm();
         PasswordField pass = f.password("password", "Contraseña inicial (mínimo 10 caracteres)");
         if (admin)
-            f.choice("role", "Rol de acceso", "Cliente", "Cliente", "Agente", "Administrador");
+            f.choice("role", "Rol de acceso", "Cliente", "Cliente", "Agente");
         dialog(
                 admin ? "Crear usuario" : "Registrar cliente",
                 card(
@@ -1359,12 +1611,7 @@ public final class AgencyApp extends Application {
                 "Crear",
                 () -> {
                     if (admin) {
-                        int role =
-                                switch (f.value("role")) {
-                                    case "Administrador" -> 1;
-                                    case "Agente" -> 2;
-                                    default -> 3;
-                                };
+                        int role = f.value("role").equals("Agente") ? 2 : 3;
                         service.createStaffUser(f.values(), pass.getText(), role);
                         users();
                     } else {
@@ -1856,6 +2103,31 @@ public final class AgencyApp extends Application {
                                                         users();
                                                     }
                                                 }))));
+    }
+
+    private void agents() {
+        page("Agentes", "Consultá el equipo, su cartera asignada y el estado de sus cuentas.");
+        TableView<Row> t = table(new AdminDashboardDao(service.db).listAgents(),
+                "id_usuario", "ID", "agente", "Agente", "email", "Correo", "telefono", "Teléfono",
+                "clientes", "Clientes asignados", "propiedades", "Propiedades creadas", "activo", "Activo");
+        content.getChildren().addAll(
+                row(button("+ Crear agente", () -> newUser(true)), secondary("Ver todos los usuarios", this::users)),
+                card(t, flow(
+                        button("Ver clientes asignados", () -> {
+                            Row agent = selected(t);
+                            page("Cartera de " + agent.text("agente"), "Clientes asignados a este agente.");
+                            List<Row> assigned = service.clients().stream()
+                                    .filter(client -> client.id("id_agente_asignado") == agent.id("id_usuario"))
+                                    .toList();
+                            TableView<Row> clients = table(assigned, "id", "ID", "etiqueta", "Cliente", "email", "Correo", "telefono", "Teléfono");
+                            content.getChildren().add(card(clients, button("Ver ficha", () -> clientDetails(selected(clients)))));
+                        }),
+                        secondary("Activar / desactivar", () -> {
+                            Row agent = selected(t);
+                            boolean active = "1".equals(agent.text("activo")) || "true".equalsIgnoreCase(agent.text("activo"));
+                            service.setActive(agent.id("id_usuario"), !active);
+                            agents();
+                        }))));
     }
 
     private void profile() {

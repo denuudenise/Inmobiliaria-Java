@@ -78,6 +78,9 @@ public final class IntegrationChecks {
         admin.bootstrapAdmin(user("1001", "admin@test.local"), password);
         admin.login("admin@test.local", password);
         check(admin.role() == 1, "Alta y acceso de administrador");
+        denied(
+                () -> admin.createStaffUser(user("1999", "segundo-admin@test.local"), password, 1),
+                "No se permite crear un segundo administrador");
         int aid = admin.createStaffUser(user("1002", "agente@test.local"), password, 2);
         agent.login("agente@test.local", password);
         int cid = client.register(user("1003", "cliente@test.local"), password);
@@ -136,6 +139,13 @@ public final class IntegrationChecks {
         client.submit(pid);
         int req2 = admin.requests().getFirst().id("id_publicacion");
         admin.review(req2, true, "Revisada");
+        var dashboard = new AdminDashboardDao(db).load();
+        check(
+                dashboard.clients() == 2
+                        && dashboard.agents() == 1
+                        && dashboard.totalProperties() == 1
+                        && dashboard.requestStates().getOrDefault("Publicada", 0L) > 0,
+                "Dashboard de administración resume datos reales");
         denied(
                 () -> admin.review(req2, false, "Duplicado"),
                 "Una solicitud no puede revisarse dos veces");
@@ -160,6 +170,7 @@ public final class IntegrationChecks {
         denied(
                 () -> other.attachments(pid, true),
                 "Documentos siguen privados con publicación aprobada");
+        admin.saveClient(cid, Set.of(), aid);
         client.interest(cid, pid, "Interesado", "Quiero una visita");
         agent.contact(cid, pid, "Visita", "Recorrido por la propiedad", "Continuar negociación");
         check(
@@ -217,6 +228,7 @@ public final class IntegrationChecks {
                 "Reactivación vuelve a borrador");
         agent.submit(pid);
         admin.review(admin.requests().getFirst().id("id_publicacion"), true, "Nueva revisión");
+        admin.saveClient(oid, Set.of(), aid);
         agent.close(pid, oid, 1, new BigDecimal("240000"), new BigDecimal("5000"));
         check(admin.operations().size() == 2, "Dos operaciones históricas en una propiedad");
         agent.changeState(pid, 1, "Corrección del ciclo");

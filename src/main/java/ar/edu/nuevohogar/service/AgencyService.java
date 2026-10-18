@@ -3,11 +3,16 @@ package ar.edu.nuevohogar.service;
 import static ar.edu.nuevohogar.dao.JdbcDao.*;
 
 import ar.edu.nuevohogar.dao.*;
+import ar.edu.nuevohogar.model.Cliente;
+import ar.edu.nuevohogar.model.Propiedad;
 import ar.edu.nuevohogar.model.Row;
+import ar.edu.nuevohogar.model.SolicitudPublicacion;
+import ar.edu.nuevohogar.model.Usuario;
 
 import java.math.BigDecimal;
 import java.nio.file.*;
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.*;
 
@@ -15,10 +20,14 @@ import java.util.*;
 public final class AgencyService {
     public final Database db;
     private final JdbcDao dao;
+    private final UsuarioDao usuarioDao;
+    private final PropiedadDao propiedadDao;
+    private final ClienteDao clienteDao;
+    private final SolicitudDao solicitudDao;
     private Integer sessionId;
     private static final String PROPERTY =
             "SELECT p.*,t.nombre AS tipo,e.nombre AS verificacion,c.nombre AS"
-                + " comercial,CONCAT(u.nombre,' ',u.apellido) AS propietario FROM propiedades p"
+                + " comercial,CASE WHEN u.id_rol=1 THEN 'Admin' ELSE CONCAT(u.nombre,' ',u.apellido) END AS propietario FROM propiedades p"
                 + " JOIN tipos_propiedad t ON t.id_tipo_propiedad=p.id_tipo_propiedad JOIN"
                 + " estados_verificacion e ON e.id_estado_verificacion=p.id_estado_verificacion"
                 + " JOIN estados_comerciales c ON c.id_estado_comercial=p.id_estado_comercial LEFT"
@@ -27,6 +36,10 @@ public final class AgencyService {
     public AgencyService(Database db) {
         this.db = db;
         dao = new JdbcDao(db);
+        usuarioDao = new UsuarioDao(db);
+        propiedadDao = new PropiedadDao(db);
+        clienteDao = new ClienteDao(db);
+        solicitudDao = new SolicitudDao(db);
     }
 
     public boolean signedIn() {
@@ -35,9 +48,9 @@ public final class AgencyService {
 
     public Row current() {
         if (sessionId == null) throw new IllegalArgumentException("Iniciá sesión para continuar.");
-        Row u = dao.one("SELECT * FROM usuarios WHERE id_usuario=? AND activo=1", sessionId);
-        u.remove("password_hash");
-        return u;
+        return usuarioDao.findActiveById(sessionId)
+                .map(Usuario::toRow)
+                .orElseThrow(() -> new IllegalArgumentException("La cuenta está inactiva."));
     }
 
     public int role() {
@@ -55,13 +68,15 @@ public final class AgencyService {
     }
 
     public void login(String email, String password) {
-        var rows =
-                dao.list(
-                        "SELECT * FROM usuarios WHERE LOWER(email)=? AND activo=1",
-                        email.trim().toLowerCase(Locale.ROOT));
-        if (rows.isEmpty() || !Passwords.verify(password, rows.getFirst().text("password_hash")))
+        Usuario usuario =
+                usuarioDao.findActiveByEmail(email)
+                        .orElseThrow(
+                                () ->
+                                        new IllegalArgumentException(
+                                                "Correo o contraseña incorrectos."));
+        if (!Passwords.verify(password, usuario.passwordHash()))
             throw new IllegalArgumentException("Correo o contraseña incorrectos.");
-        sessionId = rows.getFirst().id("id_usuario");
+        sessionId = usuario.idUsuario();
     }
 
     private static String required(Map<String, ?> data, String key, int max) {
@@ -149,6 +164,8 @@ public final class AgencyService {
     public int createStaffUser(Map<String, String> data, String password, int role) {
         require(1);
         if (role < 1 || role > 3) throw new IllegalArgumentException("Rol inválido");
+        if (role == 1)
+            throw new IllegalArgumentException("El sistema utiliza una sola cuenta de administración.");
         return createUser(data, password, role, true);
     }
 
@@ -170,11 +187,8 @@ public final class AgencyService {
         return db.transaction(
                 c -> {
                     int id =
-                            insert(
+                            UsuarioDao.insert(
                                     c,
-                                    "INSERT INTO"
-                                        + " usuarios(nombre,apellido,dni,telefono,email,password_hash,id_rol,direccion,localidad,fecha_nacimiento,genero,tipo_documento)"
-                                        + " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                                     name,
                                     last,
                                     dni,
@@ -188,13 +202,7 @@ public final class AgencyService {
                                     optional(d, "genero"),
                                     d.getOrDefault("tipo_documento", "DNI"));
                     if (role == 3)
-                        exec(
-                                c,
-                                "INSERT INTO clientes(id_cliente,fecha_inicio_relacion,id_agente_asignado)"
-                                    + " VALUES(?,?,?)",
-                                id,
-                                LocalDate.now(),
-                                assignedAgent);
+                        ClienteDao.insert(c, id, assignedAgent);
                     audit(
                             c,
                             admin ? current().id("id_usuario") : id,
@@ -211,17 +219,14 @@ public final class AgencyService {
         String name = required(d, "nombre", 100), last = required(d, "apellido", 100);
         db.transaction(
                 c -> {
-                    exec(
+                    UsuarioDao.updateProfile(
                             c,
-                            "UPDATE usuarios SET"
-                                + " nombre=?,apellido=?,telefono=?,direccion=?,localidad=? WHERE"
-                                + " id_usuario=?",
+                            actor,
                             name,
                             last,
                             optional(d, "telefono"),
                             optional(d, "direccion"),
-                            optional(d, "localidad"),
-                            actor);
+                            optional(d, "localidad"));
                     audit(c, actor, "Edición de perfil", "usuarios", actor, "");
                     return null;
                 });
@@ -256,22 +261,16 @@ public final class AgencyService {
 
     public List<Row> clients() {
         int actor = require(1, 2);
-        String scope = role() == 2 ? " WHERE c.id_agente_asignado=?" : "";
-        return dao.list(
-                "SELECT u.id_usuario AS id,CONCAT(u.nombre,' ',u.apellido) AS"
-                    + " etiqueta,u.dni,u.email,u.telefono,c.fecha_inicio_relacion,c.id_agente_asignado"
-                    + " FROM usuarios u JOIN clientes c ON c.id_cliente=u.id_usuario"
-                    + scope
-                    + " ORDER BY u.apellido",
-                role() == 2 ? new Object[] {actor} : new Object[] {});
+        List<Cliente> clientes =
+                role() == 2
+                        ? clienteDao.listAssignedToAgent(actor)
+                        : clienteDao.listForAdministrator();
+        return clientes.stream().map(Cliente::toRow).toList();
     }
 
     public List<Row> users() {
         require(1);
-        return dao.list(
-                "SELECT u.id_usuario AS id,CONCAT(u.nombre,' ',u.apellido) AS"
-                    + " etiqueta,u.email,r.nombre AS rol,u.activo FROM usuarios u JOIN roles r ON"
-                    + " r.id_rol=u.id_rol ORDER BY u.apellido");
+        return usuarioDao.findAllWithRole();
     }
 
     public List<Row> agents() {
@@ -309,66 +308,24 @@ public final class AgencyService {
             int bedrooms,
             int capacity,
             Set<Integer> features) {
-        StringBuilder sql = new StringBuilder(PROPERTY + " WHERE 1=1");
-        List<Object> a = new ArrayList<>();
-        if (catalog)
-            sql.append(" AND p.id_estado_verificacion=3 AND p.id_estado_comercial IN (1,2)");
-        else {
-            int actor = require(1, 2, 3);
-            if (role() == 3) {
-                sql.append(" AND p.id_propietario=?");
-                a.add(actor);
-            } else if (role() == 2) {
-                sql.append(
-                        " AND (p.id_agente_creador=? OR EXISTS(SELECT 1 FROM clientes ca"
-                            + " WHERE ca.id_cliente=p.id_propietario AND"
-                            + " ca.id_agente_asignado=?))");
-                a.add(actor);
-                a.add(actor);
-            }
-        }
-        if (query != null && !query.isBlank()) {
-            sql.append(
-                    " AND (LOWER(p.titulo) LIKE ? OR LOWER(p.localidad) LIKE ? OR"
-                        + " LOWER(p.direccion) LIKE ?)");
-            String q = "%" + query.trim().toLowerCase(Locale.ROOT) + "%";
-            a.add(q);
-            a.add(q);
-            a.add(q);
-        }
-        if (type != null) {
-            sql.append(" AND p.id_tipo_propiedad=?");
-            a.add(type);
-        }
-        if (bedrooms > 0) {
-            sql.append(" AND p.dormitorios>=?");
-            a.add(bedrooms);
-        }
-        if (capacity > 0) {
-            sql.append(" AND p.capacidad>=?");
-            a.add(capacity);
-        }
-        sql.append(
-                " AND EXISTS(SELECT 1 FROM propiedad_ofertas o WHERE"
-                    + " o.id_propiedad=p.id_propiedad");
-        if (operation != null) {
-            sql.append(" AND o.id_tipo_transaccion=?");
-            a.add(operation);
-        }
-        if (max != null) {
-            sql.append(" AND o.precio<=? AND o.moneda=?");
-            a.add(max);
-            a.add(currency);
-        }
-        sql.append(")");
-        for (int f : features) {
-            sql.append(
-                    " AND EXISTS(SELECT 1 FROM propiedad_caracteristicas pc WHERE"
-                        + " pc.id_propiedad=p.id_propiedad AND pc.id_caracteristica=?)");
-            a.add(f);
-        }
-        sql.append(" ORDER BY p.fecha_creacion DESC,p.id_propiedad DESC");
-        return dao.list(sql.toString(), a.toArray());
+        int actor = 0;
+        int activeRole = signedIn() ? role() : 0;
+        if (!catalog) actor = require(1, 2, 3);
+        return propiedadDao.search(
+                        catalog,
+                        query,
+                        type,
+                        operation,
+                        max,
+                        currency,
+                        bedrooms,
+                        capacity,
+                        features,
+                        activeRole,
+                        actor)
+                .stream()
+                .map(Propiedad::toRow)
+                .toList();
     }
 
     public List<Row> allProperties() {
@@ -376,7 +333,11 @@ public final class AgencyService {
     }
 
     public Row property(int id) {
-        Row p = dao.one(PROPERTY + " WHERE p.id_propiedad=?", id);
+        Row p =
+                propiedadDao.findById(id)
+                        .map(Propiedad::toRow)
+                        .orElseThrow(
+                                () -> new IllegalArgumentException("La propiedad no existe."));
         if (p.id("id_estado_verificacion") == 3
                 && Set.of(1, 2).contains(p.id("id_estado_comercial"))) return p;
         int actor = require(1, 2, 3);
@@ -389,6 +350,19 @@ public final class AgencyService {
 
     private boolean agentCanAccessProperty(int agent, int property) {
         return !dao.list(
+                        "SELECT id_propiedad FROM propiedades p WHERE p.id_propiedad=? AND"
+                            + " (p.id_agente_creador=? OR EXISTS(SELECT 1 FROM clientes c WHERE"
+                            + " c.id_cliente=p.id_propietario AND c.id_agente_asignado=?))",
+                        property,
+                        agent,
+                        agent)
+                .isEmpty();
+    }
+
+    private boolean agentCanAccessProperty(Connection connection, int agent, int property)
+            throws SQLException {
+        return !list(
+                        connection,
                         "SELECT id_propiedad FROM propiedades p WHERE p.id_propiedad=? AND"
                             + " (p.id_agente_creador=? OR EXISTS(SELECT 1 FROM clientes c WHERE"
                             + " c.id_cliente=p.id_propietario AND c.id_agente_asignado=?))",
@@ -423,7 +397,7 @@ public final class AgencyService {
                         .orElseThrow(() -> new IllegalArgumentException("Propiedad inexistente"));
         if (role() == 3 && p.id("id_propietario") != actor)
             throw new IllegalArgumentException("Solo podés editar tus propiedades.");
-        if (role() == 2 && !agentCanAccessProperty(actor, id))
+        if (role() == 2 && !agentCanAccessProperty(c, actor, id))
             throw new IllegalArgumentException("Solo podés editar propiedades de tu cartera.");
         return p;
     }
@@ -474,6 +448,31 @@ public final class AgencyService {
         String unit = optional(d, "numero_unidad");
         if (building != null && unit.isBlank())
             throw new IllegalArgumentException("Indicá el número de unidad del edificio.");
+        Propiedad.Datos propertyData =
+                new Propiedad.Datos(
+                        type,
+                        offers.getFirst().type(),
+                        title,
+                        address,
+                        city,
+                        offers.getFirst().price(),
+                        offers.getFirst().currency(),
+                        description,
+                        surface,
+                        covered,
+                        age,
+                        rooms,
+                        beds,
+                        baths,
+                        role() == 3 ? null : actor,
+                        owner,
+                        building,
+                        building == null ? null : unit,
+                        capacity,
+                        expenses,
+                        optional(d, "piso"),
+                        optional(d, "departamento_numero"),
+                        "1".equals(d.get("apto_profesional")));
         return db.transaction(
                 c -> {
                     if (list(c, "SELECT id_cliente FROM clientes WHERE id_cliente=?", owner)
@@ -482,69 +481,14 @@ public final class AgencyService {
                                 "El propietario debe tener una ficha de cliente.");
                     int pid;
                     if (id == null) {
-                        pid =
-                                insert(
-                                        c,
-                                        "INSERT INTO"
-                                            + " propiedades(id_tipo_propiedad,id_tipo_transaccion,titulo,direccion,localidad,precio,moneda,descripcion,superficie_total_m2,superficie_cubierta_m2,antiguedad_anos,ambientes,dormitorios,banos,id_agente_creador,id_propietario,id_edificio,numero_unidad,capacidad,expensas,piso,departamento_numero,apto_profesional)"
-                                            + " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                                        type,
-                                        offers.getFirst().type,
-                                        title,
-                                        address,
-                                        city,
-                                        offers.getFirst().price,
-                                        offers.getFirst().currency,
-                                        description,
-                                        surface,
-                                        covered,
-                                        age,
-                                        rooms,
-                                        beds,
-                                        baths,
-                                        role() == 3 ? null : actor,
-                                        owner,
-                                        building,
-                                        building == null ? null : unit,
-                                        capacity,
-                                        expenses,
-                                        optional(d, "piso"),
-                                        optional(d, "departamento_numero"),
-                                        "1".equals(d.get("apto_profesional")) ? 1 : 0);
+                        pid = PropiedadDao.insert(c, propertyData);
                     } else {
                         Row previous = editable(c, id, actor);
                         if (Set.of(3, 4).contains(previous.id("id_estado_comercial")))
                             throw new IllegalArgumentException(
                                     "Reactivá la propiedad antes de editar una operación cerrada.");
                         pid = id;
-                        exec(
-                                c,
-                                "UPDATE propiedades SET"
-                                    + " id_tipo_propiedad=?,id_tipo_transaccion=?,titulo=?,direccion=?,localidad=?,precio=?,moneda=?,descripcion=?,superficie_total_m2=?,superficie_cubierta_m2=?,antiguedad_anos=?,ambientes=?,dormitorios=?,banos=?,id_propietario=?,id_edificio=?,numero_unidad=?,capacidad=?,expensas=?,piso=?,departamento_numero=?,apto_profesional=?,id_estado_verificacion=1,id_admin_verificador=NULL,fecha_verificacion=NULL,motivo_rechazo=NULL"
-                                    + " WHERE id_propiedad=?",
-                                type,
-                                offers.getFirst().type,
-                                title,
-                                address,
-                                city,
-                                offers.getFirst().price,
-                                offers.getFirst().currency,
-                                description,
-                                surface,
-                                covered,
-                                age,
-                                rooms,
-                                beds,
-                                baths,
-                                owner,
-                                building,
-                                building == null ? null : unit,
-                                capacity,
-                                expenses,
-                                optional(d, "piso"),
-                                optional(d, "departamento_numero"),
-                                "1".equals(d.get("apto_profesional")) ? 1 : 0,
-                                pid);
+                        PropiedadDao.update(c, pid, propertyData);
                         exec(
                                 c,
                                 "UPDATE publicaciones SET"
@@ -593,7 +537,7 @@ public final class AgencyService {
                 "UPDATE propiedades SET id_estado_verificacion=2,motivo_rechazo=NULL WHERE"
                     + " id_propiedad=?",
                 id);
-        insert(c, "INSERT INTO publicaciones(id_propiedad,id_solicitante) VALUES(?,?)", id, actor);
+        SolicitudDao.insert(c, id, actor);
         notifyStaff(c, "Solicitud de publicación #" + id + ": " + p.text("titulo"));
         audit(c, actor, "Solicitud de publicación", "propiedades", id, "");
     }
@@ -609,26 +553,9 @@ public final class AgencyService {
 
     public List<Row> requests() {
         int actor = require(1, 2, 3);
-        String scope =
-                switch (role()) {
-                    case 2 -> "WHERE p.id_agente_creador=? OR EXISTS(SELECT 1 FROM clientes ca"
-                            + " WHERE ca.id_cliente=p.id_propietario AND"
-                            + " ca.id_agente_asignado=?) ";
-                    case 3 -> "WHERE p.id_propietario=? ";
-                    default -> "";
-                };
-        return dao.list(
-                "SELECT s.*,p.titulo,p.id_propietario,CONCAT(u.nombre,' ',u.apellido) AS"
-                    + " solicitante FROM publicaciones s JOIN propiedades p ON"
-                    + " p.id_propiedad=s.id_propiedad JOIN usuarios u ON"
-                    + " u.id_usuario=s.id_solicitante "
-                        + scope
-                        + "ORDER BY s.fecha_solicitud DESC,s.id_publicacion DESC",
-                switch (role()) {
-                    case 2 -> new Object[] {actor, actor};
-                    case 3 -> new Object[] {actor};
-                    default -> new Object[] {};
-                });
+        return solicitudDao.listForRole(role(), actor).stream()
+                .map(SolicitudPublicacion::toRow)
+                .toList();
     }
 
     public void review(int request, boolean approve, String comment) {
@@ -808,7 +735,7 @@ public final class AgencyService {
                                 + " cc.id_agente_asignado=?) "
                         : "";
         return dao.list(
-                "SELECT c.*,p.titulo,t.nombre AS operacion,CONCAT(u.nombre,' ',u.apellido) AS"
+                "SELECT c.*,p.titulo,t.nombre AS operacion,CASE WHEN u.id_rol=1 THEN 'Admin' ELSE CONCAT(u.nombre,' ',u.apellido) END AS"
                     + " cliente FROM propiedades_cerradas c JOIN propiedades p ON"
                     + " p.id_propiedad=c.id_propiedad JOIN usuarios u ON"
                     + " u.id_usuario=c.id_cliente_comprador LEFT JOIN tipos_transaccion t ON"
@@ -1113,7 +1040,7 @@ public final class AgencyService {
     public List<Row> agreements() {
         int actor = require(1, 2);
         return dao.list(
-                "SELECT c.*,CONCAT(u.nombre,' ',u.apellido) AS propietario FROM convenios c JOIN"
+                "SELECT c.*,CASE WHEN u.id_rol=1 THEN 'Admin' ELSE CONCAT(u.nombre,' ',u.apellido) END AS propietario FROM convenios c JOIN"
                     + " usuarios u ON u.id_usuario=c.id_propietario "
                     + (role() == 2
                             ? "JOIN clientes cl ON cl.id_cliente=c.id_propietario WHERE"
@@ -1146,7 +1073,7 @@ public final class AgencyService {
     public List<Row> activity() {
         int actor = require(1, 2);
         return dao.list(
-                "SELECT a.*,CONCAT(u.nombre,' ',u.apellido) AS usuario FROM auditoria a JOIN"
+                "SELECT a.*,CASE WHEN u.id_rol=1 THEN 'Admin' ELSE CONCAT(u.nombre,' ',u.apellido) END AS usuario FROM auditoria a JOIN"
                     + " usuarios u ON u.id_usuario=a.id_usuario "
                     + (role() == 2 ? "WHERE a.id_usuario=? " : "")
                     + "ORDER BY fecha DESC,id_evento DESC LIMIT 200",

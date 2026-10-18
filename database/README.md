@@ -37,6 +37,21 @@ Las propiedades preexistentes no tienen propietario en el dump. La migración de
 
 El dump que recibimos no contiene usuarios ni propiedades de negocio; solo tablas de catálogo. No hay cuentas reales ni contraseñas para convertir. Si aplicás estos scripts a otra base con usuarios cuyos hashes utilicen otro algoritmo, necesitarás un proceso de restablecimiento compatible: la aplicación verifica PBKDF2, no interpreta hashes heredados automáticamente.
 
+## Datos ficticios para practicar
+
+Después de aplicar la migración, podés importar `03_datos_demo.sql` desde phpMyAdmin para agregar un administrador demo, un agente, dos clientes y propiedades de muestra para venta y alquiler. El script puede ejecutarse de nuevo sin duplicar los datos de demostración. Al iniciar sesión, la aplicación dirige al usuario al panel según el rol guardado en `usuarios.id_rol`.
+
+Las cuentas de muestra usan la contraseña `DemoHogar2026!`:
+
+| Rol | Correo |
+| --- | --- |
+| Administrador | `admin.demo@nuevohogar.local` |
+| Agente | `agente.demo@nuevohogar.local` |
+| Cliente | `cliente.demo@nuevohogar.local` |
+| Cliente | `cliente2.demo@nuevohogar.local` |
+
+La contraseña para todas las cuentas es `DemoHogar2026!`. Son credenciales de demostración local. No las uses en un sistema publicado.
+
 ## Credenciales de conexión
 
 Creá un usuario de aplicación mediante la herramienta con la que administrás tu servidor y concedé únicamente SELECT, INSERT, UPDATE y DELETE sobre `inmobiliaria.*`. El usuario que aplica las migraciones necesita permisos DDL; la aplicación normal no.

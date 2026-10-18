@@ -4,7 +4,13 @@
 .subtitle { -fx-text-fill: #6a7d85; -fx-font-size: 13px; }
 .section-title { -fx-font-family: "Georgia"; -fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: #224e65; }
 .brand { -fx-font-family: "Georgia"; -fx-font-size: 23px; -fx-font-weight: bold; -fx-text-fill: #235570; }
-.topbar { -fx-background-color: #fcfaf5; -fx-padding: 16 26; -fx-border-color: transparent transparent #e0ded5 transparent; }
+.topbar { -fx-background-color: #fcfaf5; -fx-padding: 12 28; -fx-spacing: 12; -fx-border-color: transparent transparent #e0ded5 transparent; -fx-alignment: center-left; }
+.topbar .nav-link { -fx-background-color: transparent; -fx-text-fill: #224e65; -fx-font-weight: bold; -fx-padding: 10 12; -fx-background-radius: 0; }
+.topbar .nav-link:hover { -fx-background-color: #e9f0ed; -fx-background-radius: 6; }
+.topbar .nav-link:focused { -fx-border-color: transparent transparent #317797 transparent; -fx-border-width: 0 0 2 0; }
+.account-menu { -fx-background-color: #e7eef0; -fx-text-fill: #24556c; -fx-background-radius: 6; -fx-padding: 9 14; -fx-cursor: hand; }
+.account-menu:hover { -fx-background-color: #d5e4e9; }
+.account-menu .label { -fx-text-fill: #24556c; }
 .sidebar { -fx-background-color: linear-gradient(to bottom, #244f65, #16384b); -fx-padding: 25 16; -fx-spacing: 8; }
 .sidebar .label { -fx-text-fill: #e2edf0; }
 .sidebar .button { -fx-background-color: transparent; -fx-text-fill: #eef6f8; -fx-alignment: center-left; -fx-padding: 12 16; -fx-background-radius: 7; }
@@ -50,3 +56,41 @@
 .error { -fx-text-fill: #a33838; -fx-font-weight: bold; }
 .footer { -fx-text-fill: #778a91; -fx-font-size: 11px; }
 .dialog-pane { -fx-background-color: #f8f5ed; }
+
+/* Panel administrativo */
+.admin-avatar { -fx-background-color: #2f7188; -fx-background-radius: 22; -fx-min-width: 38; -fx-min-height: 38; -fx-alignment: center; -fx-text-fill: white; -fx-font-size: 17px; -fx-font-weight: bold; }
+.admin-name { -fx-text-fill: #173f55; -fx-font-size: 14px; -fx-font-weight: bold; }
+.admin-caption { -fx-text-fill: #75868a; -fx-font-size: 11px; }
+.admin-side-brand { -fx-text-fill: #fbfaf5; -fx-font-family: "Georgia"; -fx-font-size: 19px; -fx-font-weight: bold; -fx-padding: 0 8 2 8; }
+.admin-side-caption { -fx-text-fill: #a8c3cc; -fx-font-size: 10px; -fx-font-weight: bold; -fx-padding: 18 9 5 9; }
+.admin-side-foot { -fx-text-fill: #c2d5d6; -fx-font-family: "Georgia"; -fx-font-size: 14px; -fx-padding: 16 10; -fx-alignment: center; -fx-text-alignment: center; }
+.admin-nav-item { -fx-background-color: transparent; -fx-text-fill: #e5eff0; -fx-alignment: center-left; -fx-padding: 12 14; -fx-background-radius: 8; -fx-font-size: 13px; -fx-font-weight: normal; }
+.admin-nav-item:hover { -fx-background-color: rgba(255,255,255,.10); }
+.admin-nav-item.active { -fx-background-color: linear-gradient(to right, #387a91, #30677f); -fx-text-fill: #ffffff; -fx-font-weight: bold; -fx-border-color: transparent transparent transparent #dfbd81; -fx-border-width: 0 0 0 3; }
+.admin-welcome { -fx-background-color: linear-gradient(to right, #e1ece7, #f2e8d8); -fx-background-radius: 14; -fx-padding: 24 26; -fx-border-color: #e3e3d9; -fx-border-radius: 14; }
+.admin-welcome-title { -fx-font-family: "Georgia"; -fx-font-size: 23px; -fx-font-weight: bold; -fx-text-fill: #204d63; }
+.admin-welcome-copy { -fx-text-fill: #5e747d; -fx-font-size: 13px; }
+.admin-metrics { -fx-hgap: 13; -fx-vgap: 13; }
+.admin-metric { -fx-background-color: #fffdf8; -fx-background-radius: 12; -fx-border-color: #e4e1d8; -fx-border-radius: 12; -fx-padding: 15; -fx-spacing: 6; -fx-min-height: 132; -fx-pref-height: 132; -fx-effect: dropshadow(gaussian, rgba(28,61,69,.06), 9, 0, 0, 2); }
+.admin-metric-icon { -fx-background-color: #e6eff0; -fx-background-radius: 22; -fx-min-width: 36; -fx-min-height: 36; -fx-alignment: center; -fx-text-fill: #286781; -fx-font-size: 18px; -fx-font-weight: bold; }
+.admin-metric-name { -fx-text-fill: #59717b; -fx-font-size: 12px; -fx-wrap-text: true; }
+.admin-metric-value { -fx-font-family: "Georgia"; -fx-font-size: 30px; -fx-font-weight: bold; -fx-text-fill: #1d526c; }
+.admin-metric-detail { -fx-text-fill: #829195; -fx-font-size: 11px; }
+.metric-gold .admin-metric-icon { -fx-background-color: #f8ecd8; -fx-text-fill: #a9762d; }
+.metric-green .admin-metric-icon { -fx-background-color: #e4eee4; -fx-text-fill: #518466; }
+.metric-violet .admin-metric-icon { -fx-background-color: #ebe9f3; -fx-text-fill: #706899; }
+.metric-teal .admin-metric-icon { -fx-background-color: #deefea; -fx-text-fill: #398274; }
+.admin-card { -fx-background-color: #fffdf8; -fx-background-radius: 12; -fx-border-color: #e3e1d8; -fx-border-radius: 12; -fx-padding: 18; -fx-spacing: 13; -fx-effect: dropshadow(gaussian, rgba(28,61,69,.045), 8, 0, 0, 2); }
+.admin-overview { -fx-alignment: top-center; }
+.admin-state-name { -fx-text-fill: #5c737d; -fx-font-size: 11px; }
+.admin-state-count { -fx-text-fill: #244f65; -fx-font-size: 12px; -fx-font-weight: bold; }
+.admin-summary-note { -fx-text-fill: #788a8e; -fx-font-size: 11px; }
+.admin-card .progress-bar { -fx-accent: #397d91; -fx-pref-height: 9px; }
+.admin-card .progress-bar > .track { -fx-background-color: #edf0eb; -fx-background-radius: 6; }
+.admin-card .progress-bar > .bar { -fx-background-radius: 6; }
+.admin-card .table-view { -fx-border-color: #ece9e0; -fx-border-radius: 8; }
+.admin-card .table-row-cell { -fx-cell-size: 36; }
+.admin-card .table-view .column-header-background { -fx-background-color: #f0f3ef; -fx-background-radius: 7 7 0 0; }
+.admin-card .button { -fx-background-radius: 7; }
+.admin-card .secondary { -fx-background-color: #e9f0ed; }
+.admin-welcome .secondary { -fx-background-color: rgba(255,255,255,.75); -fx-text-fill: #275b70; }
