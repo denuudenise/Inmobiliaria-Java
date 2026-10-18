@@ -20,6 +20,7 @@ import javafx.stage.*;
 import java.math.BigDecimal;
 import java.nio.file.*;
 import java.nio.file.Path;
+import java.sql.SQLException;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -68,8 +69,8 @@ public final class AgencyApp extends Application {
                                     18,
                                     title("No pudimos abrir la base de datos"),
                                     label(
-                                            "Revisá config.properties y que hayas aplicado los dos"
-                                                    + " scripts SQL.",
+                                            "Revisá config.properties, que MySQL esté iniciado y"
+                                                    + " que la base tenga el esquema del proyecto.",
                                             "subtitle"),
                                     button("Reintentar", () -> start(stage)));
                     box.getStyleClass().add("page");
@@ -210,10 +211,20 @@ public final class AgencyApp extends Application {
         a.initOwner(stage);
         a.setTitle("Revisá los datos");
         a.setHeaderText("No se completó la acción");
-        a.setContentText(
-                e.getMessage() == null
-                        ? "Ocurrió un error. Revisá la consola para más detalle."
-                        : e.getMessage());
+        Throwable cause = e;
+        while (cause.getCause() != null) cause = cause.getCause();
+        String message = Objects.toString(e.getMessage(), "Ocurrió un error inesperado.");
+        if (cause instanceof SQLException sql) {
+            message +=
+                    "\n\nDetalle de MySQL: "
+                            + Objects.toString(sql.getMessage(), "Error SQL")
+                            + (sql.getSQLState() == null ? "" : "\nCódigo SQL: " + sql.getSQLState());
+        } else if (cause != e && cause.getMessage() != null) {
+            message += "\n\nDetalle: " + cause.getMessage();
+        }
+        a.setContentText(message);
+        a.setResizable(true);
+        a.getDialogPane().setPrefWidth(560);
         a.showAndWait();
     }
 
@@ -403,7 +414,8 @@ public final class AgencyApp extends Application {
                                 () -> {
                                     service.login(f.value("email"), pass.getText());
                                     shell();
-                                    dashboard();
+                                    if (service.role() == 3) catalog();
+                                    else dashboard();
                                 }),
                         secondary("Crear una cuenta", this::register));
         HBox.setHgrow(right, Priority.ALWAYS);
@@ -511,22 +523,11 @@ public final class AgencyApp extends Application {
                                                     service.register(d, pass.getText());
                                                     service.login(d.get("email"), pass.getText());
                                                     shell();
-                                                    page(
-                                                            "¡Registro completado!",
+                                                    catalog();
+                                                    info(
                                                             "Tu cuenta se creó correctamente. Ya"
-                                                                    + " podés buscar propiedades y"
-                                                                    + " enviar solicitudes.");
-                                                    content.getChildren()
-                                                            .add(
-                                                                    card(
-                                                                            button(
-                                                                                    "Ir al"
-                                                                                        + " catálogo",
-                                                                                    this::catalog),
-                                                                            secondary(
-                                                                                    "Ver mi perfil",
-                                                                                    this
-                                                                                            ::profile)));
+                                                                    + " podés explorar las propiedades"
+                                                                    + " en venta y alquiler.");
                                                 }
                                             }));
                     area.getChildren().add(controls);
@@ -906,6 +907,42 @@ public final class AgencyApp extends Application {
                                 properties.stream()
                                         .filter(r -> r.id("id_estado_verificacion") == 4)
                                         .count()));
+        if (service.role() == 1) {
+            metrics.getChildren()
+                    .addAll(
+                            stat("Clientes", service.clients().size()),
+                            stat("Agentes", service.agents().size()),
+                            stat("Operaciones cerradas", service.operations().size()),
+                            stat(
+                                    "Disponibles",
+                                    properties.stream()
+                                            .filter(r -> r.id("id_estado_comercial") == 1)
+                                            .count()),
+                            stat(
+                                    "Vendidas",
+                                    properties.stream()
+                                            .filter(r -> r.id("id_estado_comercial") == 3)
+                                            .count()),
+                            stat(
+                                    "Alquiladas",
+                                    properties.stream()
+                                            .filter(r -> r.id("id_estado_comercial") == 4)
+                                            .count()));
+        } else if (service.role() == 2) {
+            metrics.getChildren()
+                    .addAll(
+                            stat("Mis clientes", service.clients().size()),
+                            stat("Mis operaciones", service.operations().size()));
+        } else {
+            metrics.getChildren()
+                    .addAll(
+                            stat(
+                                    "Mis solicitudes",
+                                    requests.size()),
+                            stat(
+                                    "Mis intereses",
+                                    service.interests(service.current().id("id_usuario")).size()));
+        }
         content.getChildren().add(metrics);
         PieChart pie = new PieChart();
         Map<String, Long> counts = new LinkedHashMap<>();
@@ -1356,18 +1393,24 @@ public final class AgencyApp extends Application {
             checks.put(role, c);
         }
         Form assign = new Form();
-        assign.rows(
-                "agent",
-                "Agente asignado",
-                service.agents(),
-                client.id("id_agente_asignado"),
-                true);
+        if (service.role() == 1)
+            assign.rows(
+                    "agent",
+                    "Agente asignado",
+                    service.agents(),
+                    client.id("id_agente_asignado"),
+                    true);
         content.getChildren()
                 .add(
                         card(
                                 label("Roles del cliente", "section-title"),
                                 flow(checks.values().toArray(Node[]::new)),
-                                assign,
+                                service.role() == 1
+                                        ? assign
+                                        : label(
+                                                "Agente asignado: "
+                                                        + service.current().text("nombre"),
+                                                "subtitle"),
                                 button(
                                         "Guardar ficha",
                                         () -> {
@@ -1376,7 +1419,10 @@ public final class AgencyApp extends Application {
                                                     (k, c) -> {
                                                         if (c.isSelected()) chosen.add(k);
                                                     });
-                                            int agent = number(assign.value("agent"));
+                                            int agent =
+                                                    service.role() == 1
+                                                            ? number(assign.value("agent"))
+                                                            : client.id("id_agente_asignado");
                                             service.saveClient(
                                                     id, chosen, agent == 0 ? null : agent);
                                             info("Ficha actualizada.");

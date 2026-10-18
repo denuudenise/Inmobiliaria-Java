@@ -159,6 +159,8 @@ public final class AgencyService {
                 mail = required(d, "email", 150).toLowerCase(Locale.ROOT);
         email(mail);
         String hash = Passwords.hash(password);
+        int registeringUser = signedIn() ? current().id("id_usuario") : 0;
+        Integer assignedAgent = signedIn() && role() == 2 ? registeringUser : null;
         String birth = optional(d, "fecha_nacimiento");
         if (!birth.isBlank() && LocalDate.parse(birth).isAfter(LocalDate.now()))
             throw new IllegalArgumentException("La fecha de nacimiento no puede ser futura.");
@@ -188,10 +190,11 @@ public final class AgencyService {
                     if (role == 3)
                         exec(
                                 c,
-                                "INSERT INTO clientes(id_cliente,fecha_inicio_relacion)"
-                                    + " VALUES(?,?)",
+                                "INSERT INTO clientes(id_cliente,fecha_inicio_relacion,id_agente_asignado)"
+                                    + " VALUES(?,?,?)",
                                 id,
-                                LocalDate.now());
+                                LocalDate.now(),
+                                assignedAgent);
                     audit(
                             c,
                             admin ? current().id("id_usuario") : id,
@@ -252,12 +255,15 @@ public final class AgencyService {
     }
 
     public List<Row> clients() {
-        require(1, 2);
+        int actor = require(1, 2);
+        String scope = role() == 2 ? " WHERE c.id_agente_asignado=?" : "";
         return dao.list(
                 "SELECT u.id_usuario AS id,CONCAT(u.nombre,' ',u.apellido) AS"
                     + " etiqueta,u.dni,u.email,u.telefono,c.fecha_inicio_relacion,c.id_agente_asignado"
-                    + " FROM usuarios u JOIN clientes c ON c.id_cliente=u.id_usuario ORDER BY"
-                    + " u.apellido");
+                    + " FROM usuarios u JOIN clientes c ON c.id_cliente=u.id_usuario"
+                    + scope
+                    + " ORDER BY u.apellido",
+                role() == 2 ? new Object[] {actor} : new Object[] {});
     }
 
     public List<Row> users() {
@@ -272,7 +278,7 @@ public final class AgencyService {
         require(1, 2);
         return dao.list(
                 "SELECT id_usuario AS id,CONCAT(nombre,' ',apellido) AS etiqueta FROM usuarios"
-                    + " WHERE id_rol IN (1,2) AND activo=1");
+                    + " WHERE id_rol=2 AND activo=1");
     }
 
     public void setActive(int id, boolean active) {
@@ -311,6 +317,13 @@ public final class AgencyService {
             int actor = require(1, 2, 3);
             if (role() == 3) {
                 sql.append(" AND p.id_propietario=?");
+                a.add(actor);
+            } else if (role() == 2) {
+                sql.append(
+                        " AND (p.id_agente_creador=? OR EXISTS(SELECT 1 FROM clientes ca"
+                            + " WHERE ca.id_cliente=p.id_propietario AND"
+                            + " ca.id_agente_asignado=?))");
+                a.add(actor);
                 a.add(actor);
             }
         }
@@ -369,7 +382,20 @@ public final class AgencyService {
         int actor = require(1, 2, 3);
         if (role() == 3 && p.id("id_propietario") != actor)
             throw new IllegalArgumentException("No podés acceder a esta propiedad.");
+        if (role() == 2 && !agentCanAccessProperty(actor, id))
+            throw new IllegalArgumentException("La propiedad no pertenece a tu cartera.");
         return p;
+    }
+
+    private boolean agentCanAccessProperty(int agent, int property) {
+        return !dao.list(
+                        "SELECT id_propiedad FROM propiedades p WHERE p.id_propiedad=? AND"
+                            + " (p.id_agente_creador=? OR EXISTS(SELECT 1 FROM clientes c WHERE"
+                            + " c.id_cliente=p.id_propietario AND c.id_agente_asignado=?))",
+                        property,
+                        agent,
+                        agent)
+                .isEmpty();
     }
 
     public List<Row> offers(int id) {
@@ -397,6 +423,8 @@ public final class AgencyService {
                         .orElseThrow(() -> new IllegalArgumentException("Propiedad inexistente"));
         if (role() == 3 && p.id("id_propietario") != actor)
             throw new IllegalArgumentException("Solo podés editar tus propiedades.");
+        if (role() == 2 && !agentCanAccessProperty(actor, id))
+            throw new IllegalArgumentException("Solo podés editar propiedades de tu cartera.");
         return p;
     }
 
@@ -581,14 +609,26 @@ public final class AgencyService {
 
     public List<Row> requests() {
         int actor = require(1, 2, 3);
+        String scope =
+                switch (role()) {
+                    case 2 -> "WHERE p.id_agente_creador=? OR EXISTS(SELECT 1 FROM clientes ca"
+                            + " WHERE ca.id_cliente=p.id_propietario AND"
+                            + " ca.id_agente_asignado=?) ";
+                    case 3 -> "WHERE p.id_propietario=? ";
+                    default -> "";
+                };
         return dao.list(
                 "SELECT s.*,p.titulo,p.id_propietario,CONCAT(u.nombre,' ',u.apellido) AS"
                     + " solicitante FROM publicaciones s JOIN propiedades p ON"
                     + " p.id_propiedad=s.id_propiedad JOIN usuarios u ON"
                     + " u.id_usuario=s.id_solicitante "
-                        + (role() == 3 ? "WHERE p.id_propietario=? " : "")
+                        + scope
                         + "ORDER BY s.fecha_solicitud DESC,s.id_publicacion DESC",
-                role() == 3 ? new Object[] {actor} : new Object[] {});
+                switch (role()) {
+                    case 2 -> new Object[] {actor, actor};
+                    case 3 -> new Object[] {actor};
+                    default -> new Object[] {};
+                });
     }
 
     public void review(int request, boolean approve, String comment) {
@@ -716,6 +756,16 @@ public final class AgencyService {
                                     + " reservadas o en trámite.");
                     if (list(c, "SELECT * FROM clientes WHERE id_cliente=?", client).isEmpty())
                         throw new IllegalArgumentException("Seleccioná un cliente.");
+                    if (role() == 2
+                            && list(
+                                            c,
+                                            "SELECT id_cliente FROM clientes WHERE id_cliente=? AND"
+                                                + " id_agente_asignado=?",
+                                            client,
+                                            actor)
+                                    .isEmpty())
+                        throw new IllegalArgumentException(
+                                "Solo podés registrar operaciones de un cliente asignado a vos.");
                     Row o =
                             list(
                                             c,
@@ -748,21 +798,35 @@ public final class AgencyService {
     }
 
     public List<Row> operations() {
-        require(1, 2);
+        int actor = require(1, 2);
+        String scope =
+                role() == 2
+                        ? "WHERE p.id_agente_creador=? OR EXISTS(SELECT 1 FROM clientes cp"
+                                + " WHERE cp.id_cliente=p.id_propietario AND"
+                                + " cp.id_agente_asignado=?) OR EXISTS(SELECT 1 FROM clientes cc"
+                                + " WHERE cc.id_cliente=c.id_cliente_comprador AND"
+                                + " cc.id_agente_asignado=?) "
+                        : "";
         return dao.list(
                 "SELECT c.*,p.titulo,t.nombre AS operacion,CONCAT(u.nombre,' ',u.apellido) AS"
                     + " cliente FROM propiedades_cerradas c JOIN propiedades p ON"
                     + " p.id_propiedad=c.id_propiedad JOIN usuarios u ON"
                     + " u.id_usuario=c.id_cliente_comprador LEFT JOIN tipos_transaccion t ON"
-                    + " t.id_tipo_transaccion=c.id_tipo_transaccion ORDER BY fecha_cierre DESC");
+                    + " t.id_tipo_transaccion=c.id_tipo_transaccion "
+                    + scope
+                    + "ORDER BY fecha_cierre DESC",
+                role() == 2 ? new Object[] {actor, actor, actor} : new Object[] {});
     }
 
     private void accessClient(int client) {
         int actor = require(1, 2, 3);
         if (role() == 3 && actor != client)
             throw new IllegalArgumentException("Solo podés acceder a tu ficha.");
-        if (dao.list("SELECT * FROM clientes WHERE id_cliente=?", client).isEmpty())
+        List<Row> ficha = dao.list("SELECT * FROM clientes WHERE id_cliente=?", client);
+        if (ficha.isEmpty())
             throw new IllegalArgumentException("Ficha de cliente inexistente.");
+        if (role() == 2 && ficha.getFirst().id("id_agente_asignado") != actor)
+            throw new IllegalArgumentException("Este cliente no está asignado a tu cartera.");
     }
 
     public List<Row> contacts(int client) {
@@ -865,15 +929,16 @@ public final class AgencyService {
         accessClient(client);
         if (!Set.of("Comprador", "Vendedor", "Propietario", "Inquilino", "Inversor")
                 .containsAll(roles)) throw new IllegalArgumentException("Rol comercial inválido");
-        if (agent != null && agents().stream().noneMatch(r -> r.id("id") == agent))
+        if (role() == 1 && agent != null && agents().stream().noneMatch(r -> r.id("id") == agent))
             throw new IllegalArgumentException("Agente inválido");
         db.transaction(
                 c -> {
-                    exec(
-                            c,
-                            "UPDATE clientes SET id_agente_asignado=? WHERE id_cliente=?",
-                            agent,
-                            client);
+                    if (role() == 1)
+                        exec(
+                                c,
+                                "UPDATE clientes SET id_agente_asignado=? WHERE id_cliente=?",
+                                agent,
+                                client);
                     exec(c, "DELETE FROM roles_cliente WHERE id_cliente=?", client);
                     for (String role : roles)
                         exec(c, "INSERT INTO roles_cliente VALUES(?,?)", client, role);
@@ -1046,10 +1111,16 @@ public final class AgencyService {
     }
 
     public List<Row> agreements() {
-        require(1, 2);
+        int actor = require(1, 2);
         return dao.list(
                 "SELECT c.*,CONCAT(u.nombre,' ',u.apellido) AS propietario FROM convenios c JOIN"
-                    + " usuarios u ON u.id_usuario=c.id_propietario ORDER BY fecha DESC");
+                    + " usuarios u ON u.id_usuario=c.id_propietario "
+                    + (role() == 2
+                            ? "JOIN clientes cl ON cl.id_cliente=c.id_propietario WHERE"
+                                    + " cl.id_agente_asignado=? "
+                            : "")
+                    + "ORDER BY fecha DESC",
+                role() == 2 ? new Object[] {actor} : new Object[] {});
     }
 
     public List<Row> notifications() {
@@ -1073,15 +1144,19 @@ public final class AgencyService {
     }
 
     public List<Row> activity() {
-        require(1, 2);
+        int actor = require(1, 2);
         return dao.list(
                 "SELECT a.*,CONCAT(u.nombre,' ',u.apellido) AS usuario FROM auditoria a JOIN"
-                    + " usuarios u ON u.id_usuario=a.id_usuario ORDER BY fecha DESC,id_evento DESC"
-                    + " LIMIT 200");
+                    + " usuarios u ON u.id_usuario=a.id_usuario "
+                    + (role() == 2 ? "WHERE a.id_usuario=? " : "")
+                    + "ORDER BY fecha DESC,id_evento DESC LIMIT 200",
+                role() == 2 ? new Object[] {actor} : new Object[] {});
     }
 
     public List<Row> stateHistory(int property) {
-        require(1, 2);
+        int actor = require(1, 2);
+        if (role() == 2 && !agentCanAccessProperty(actor, property))
+            throw new IllegalArgumentException("La propiedad no pertenece a tu cartera.");
         return dao.list(
                 "SELECT h.*,e.nombre AS estado FROM historial_estados h JOIN estados_comerciales e"
                     + " ON e.id_estado_comercial=h.estado_nuevo WHERE id_propiedad=? ORDER BY fecha"
