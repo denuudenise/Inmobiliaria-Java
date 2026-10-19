@@ -73,7 +73,7 @@ public final class AplicacionInmobiliaria extends Application {
                     service = init.getValue();
                     shell();
                     if (service.needsAdmin()) bootstrap();
-                    else catalog();
+                    else login();
                 });
         init.setOnFailed(
                 e -> {
@@ -110,12 +110,8 @@ public final class AplicacionInmobiliaria extends Application {
         if (!service.signedIn()) {
             header.getChildren()
                     .addAll(
-                            navButton("Inicio", this::catalog),
-                            navButton("Comprar", () -> catalog(1)),
-                            navButton("Alquilar", () -> catalog(2)),
-                            navButton("Vender", this::register),
                             secondary("Iniciar sesión", this::login),
-                            button("Registrarme", this::register));
+                            button("Crear cuenta de cliente", this::register));
             root.setTop(header);
             root.setLeft(null);
             return;
@@ -149,7 +145,7 @@ public final class AplicacionInmobiliaria extends Application {
                     e -> {
                         service.logout();
                         shell();
-                        catalog();
+                        login();
                     });
             account.getItems()
                     .addAll(
@@ -168,14 +164,13 @@ public final class AplicacionInmobiliaria extends Application {
         }
         if (service.role() == 1) {
             header.getChildren().addAll(
-                    navButton("Catálogo", this::catalog),
                     label("◉", "admin-avatar"),
                     new VBox(2, label("Admin", "admin-name"), label("Administrador", "admin-caption")),
                     secondary("Notificaciones", this::notifications),
                     button("Cerrar sesión", () -> {
                         service.logout();
                         shell();
-                        catalog();
+                        login();
                     }));
             root.setTop(header);
             VBox nav = new VBox(9);
@@ -206,9 +201,10 @@ public final class AplicacionInmobiliaria extends Application {
             return;
         }
         if (service.signedIn()) {
-            header.getChildren()
-                    .addAll(
-                            navButton("Catálogo", this::catalog),
+            if (service.role() == 3) {
+                header.getChildren().add(navButton("Catálogo", this::catalog));
+            }
+            header.getChildren().addAll(
                             button("Mi perfil", this::profile),
                             label(
                                     service.current().text("nombre") + " · " + roleName(),
@@ -218,7 +214,7 @@ public final class AplicacionInmobiliaria extends Application {
                                     () -> {
                                         service.logout();
                                         shell();
-                                        catalog();
+                                        login();
                                     }));
         }
         root.setTop(header);
@@ -636,6 +632,10 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void catalog(int operationFilter) {
+        if (!service.signedIn()) {
+            login();
+            return;
+        }
         page(
                 operationFilter == 1
                         ? "Propiedades en venta"
