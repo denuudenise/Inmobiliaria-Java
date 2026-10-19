@@ -4,7 +4,7 @@ import ar.edu.nuevohogar.interfaz.paneles.ElementoMenuPanel;
 import java.util.List;
 
 /** Menú principal del panel de administración. */
-public final class PanelAdministrador {
+public final class  PanelAdministrador {
     private PanelAdministrador() {}
     public static List<ElementoMenuPanel> menu(Runnable... a) {
         return List.of(
