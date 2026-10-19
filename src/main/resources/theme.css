@@ -16,6 +16,10 @@
 .sidebar .button { -fx-background-color: transparent; -fx-text-fill: #eef6f8; -fx-alignment: center-left; -fx-padding: 12 16; -fx-background-radius: 7; }
 .sidebar .button:hover { -fx-background-color: #356880; }
 .page { -fx-padding: 28; -fx-spacing: 22; }
+.login-background { -fx-background-color: #fbf7ed; -fx-padding: 32; }
+.login-card { -fx-background-color: #fffefa; -fx-background-radius: 4; -fx-border-color: #ebe7dd; -fx-border-radius: 4; -fx-padding: 24; -fx-spacing: 14; -fx-effect: dropshadow(gaussian, rgba(41, 58, 65, 0.08), 14, 0, 0, 3); }
+.login-card .section-title { -fx-font-family: "Segoe UI"; -fx-font-size: 20px; }
+.login-card .form { -fx-hgap: 0; -fx-vgap: 12; }
 .card { -fx-background-color: #fffcf6; -fx-background-radius: 9; -fx-border-color: #e3e0d7; -fx-border-radius: 9; -fx-padding: 20; -fx-spacing: 12; }
 .property-card { -fx-background-color: #fffcf6; -fx-background-radius: 8; -fx-border-color: #e2ded3; -fx-border-radius: 8; -fx-padding: 0 0 15 0; }
 .hero { -fx-background-color: linear-gradient(to right,#e5ede8,#f1e8d8); -fx-background-radius: 12; -fx-padding: 30; }

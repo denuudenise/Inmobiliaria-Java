@@ -108,10 +108,6 @@ public final class AplicacionInmobiliaria extends Application {
         HBox.setHgrow(gap, Priority.ALWAYS);
         header.getChildren().addAll(brand, gap);
         if (!service.signedIn()) {
-            header.getChildren()
-                    .addAll(
-                            secondary("Iniciar sesión", this::login),
-                            button("Crear cuenta de cliente", this::register));
             root.setTop(header);
             root.setLeft(null);
             return;
@@ -497,46 +493,40 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void login() {
-        page(
-                "Bienvenido/a a Nuevo Hogar",
-                "Ingresá para administrar tus propiedades y continuar tus gestiones.");
+        activePage = "Iniciar sesión";
         Formulario f = FormularioAcceso.inicioSesion();
-        VBox left =
-                card(
-                        house(340, 215, 0),
-                        title("Tu próximo hogar\nempieza acá."),
-                        label(
-                                "Encontrá propiedades, seguí tus solicitudes y mantené toda tu"
-                                        + " información en un solo lugar.",
-                                "subtitle"));
-        HBox.setHgrow(left, Priority.ALWAYS);
-        VBox right =
-                card(
-                        label("Iniciar sesión", "section-title"),
-                        f,
-                        button(
-                                "Iniciar sesión",
-                                () -> {
-                                    service.login(f.value("email"), f.value("password"));
-                                    shell();
-                                    if (service.role() == 3) catalog();
-                                    else dashboard();
-                                }),
-                        secondary("Crear una cuenta", this::register));
-        HBox.setHgrow(right, Priority.ALWAYS);
-        content.getChildren().add(row(left, right));
+        VBox form = new VBox(14);
+        form.getStyleClass().add("login-card");
+        form.setMaxWidth(410);
+        form.setPrefWidth(410);
+        Button submit = button(
+                "Iniciar sesión",
+                () -> {
+                    service.login(f.value("email"), f.value("password"));
+                    shell();
+                    if (service.role() == 3) catalog();
+                    else dashboard();
+                });
+        Button signup = secondary("Crear una cuenta", this::register);
+        submit.setMaxWidth(Double.MAX_VALUE);
+        signup.setMaxWidth(Double.MAX_VALUE);
+        submit.setAlignment(Pos.CENTER_LEFT);
+        signup.setAlignment(Pos.CENTER_LEFT);
+        form.getChildren().addAll(
+                label("Iniciar sesión", "section-title"),
+                f,
+                submit,
+                signup);
         if (service.db.demo)
-            content.getChildren()
-                    .add(
-                            card(
-                                    label("MODO DEMOSTRACIÓN · datos ficticios", "section-title"),
-                                    label(
-                                            "Administrador: admin@nuevohogar.demo\n"
-                                                    + "Agente: agente@nuevohogar.demo\n"
-                                                    + "Cliente: cliente@nuevohogar.demo\n"
-                                                    + "Contraseña para los tres: "
-                                                    + DatosDemostracion.PASSWORD,
-                                            "subtitle")));
+            form.getChildren().add(
+                    label(
+                            "Demostración: admin@nuevohogar.demo · agente@nuevohogar.demo · "
+                                    + "cliente@nuevohogar.demo\nContraseña: "
+                                    + DatosDemostracion.PASSWORD,
+                            "subtitle"));
+        StackPane center = new StackPane(form);
+        center.getStyleClass().add("login-background");
+        root.setCenter(center);
     }
 
     private void register() {
