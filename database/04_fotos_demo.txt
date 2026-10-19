@@ -1,0 +1,25 @@
+FOTOS DE MUESTRA PARA LAS DIEZ PROPIEDADES
+
+La aplicación busca estas imágenes dentro de:
+  data/archivos/demo/
+
+Copiá una foto JPG para cada propiedad y usá exactamente estos nombres:
+  propiedad-01.jpg  PH reciclado con terraza en Villa Urquiza
+  propiedad-02.jpg  Casa familiar con jardín en Martínez
+  propiedad-03.jpg  Casa amueblada con pileta en Tigre
+  propiedad-04.jpg  Departamento con balcón en Caballito
+  propiedad-05.jpg  Local a la calle en Belgrano
+  propiedad-06.jpg  Lote arbolado en barrio privado de Escobar
+  propiedad-07.jpg  Oficina luminosa cerca de Plaza San Martín
+  propiedad-08.jpg  Cochera cubierta en Palermo Soho
+  propiedad-09.jpg  Chalet frente al mar en alquiler
+  propiedad-10.jpg  Departamento con amenities en Vicente López
+
+El SQL 04_propiedades_demo.sql registra esas rutas en propiedad_multimedia.
+Si falta el archivo físico, la aplicación usa la ilustración genérica de vivienda.
+Podés usar tus propias fotos de muestra; procurá que sean horizontales y JPG.
+El sistema acepta JPG, JPEG y PNG. No cargues fotos personales ni documentos reales.
+
+También podés usar "Adjuntar archivos" desde la ficha de una propiedad. La aplicación
+copiará esa imagen y guardará una referencia propia en MySQL. Las referencias demo cuyo
+archivo no exista se ignoran y se muestra la ilustración genérica.
