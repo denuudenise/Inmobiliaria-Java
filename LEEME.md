@@ -13,7 +13,7 @@ La aplicación ahora está en `src/main/java/ar/edu/nuevohogar`. Conservé el `M
 
 Dejé `config.properties` configurado para `inmobiliaria` en `localhost:3306`, usuario `root` y contraseña vacía, que es la configuración local habitual de XAMPP. Si tu MySQL tiene otra contraseña o puerto, corregí ese archivo.
 
-El proyecto necesita algunas tablas y columnas adicionales para los módulos nuevos. **No vuelvas a importar `01_original.sql`.** Antes de modificar tu base, exportá una copia desde phpMyAdmin. Después revisá `database/README.md` y aplicá `database/02_migracion.sql` una sola vez sobre la base existente. El script no se ejecuta solo desde Java. Si `schema_version` ya muestra la versión 2, no lo vuelvas a aplicar.
+La base que ya usás está en la versión 2. **No vuelvas a importar `01_original.sql` ni `02_migracion.sql`.** Para habilitar agenda de visitas, recordatorios e historial comercial, exportá una copia desde phpMyAdmin y luego importá solamente `database/05_modulos_comerciales.sql` con `inmobiliaria` seleccionada. La migración no se ejecuta sola desde Java.
 
 El acceso usa la cuenta que ya exista en `usuarios`; el rol `1` lleva al panel Administrador, `2` al panel Agente y `3` al panel Cliente. El código verifica tanto hashes PBKDF2 nuevos como hashes BCrypt existentes.
 
@@ -31,9 +31,19 @@ La base de demostración se guarda en `data/nuevo-hogar.mv.db` y no modifica MyS
 
 ## Código incorporado
 
-- `src/main/java/ar/edu/nuevohogar`: aplicación, pantallas, servicio, modelos y DAO.
+- `src/main/java/ar/edu/nuevohogar/interfaz`: ventanas JavaFX.
+- `src/main/java/ar/edu/nuevohogar/interfaz/autenticacion`: formularios de ingreso y registro.
+- `src/main/java/ar/edu/nuevohogar/interfaz/componentes`: controles de formulario reutilizables.
+- `src/main/java/ar/edu/nuevohogar/interfaz/paneles/administrador`, `/agente` y `/cliente`: navegación específica de cada rol.
+- `src/main/java/ar/edu/nuevohogar/backend`: reglas de negocio y coordinación.
+- `src/main/java/ar/edu/nuevohogar/backend/autenticacion`: verificación y hash de contraseñas.
+- `src/main/java/ar/edu/nuevohogar/persistencia/dao`: acceso SQL separado por responsabilidad.
+- `src/main/java/ar/edu/nuevohogar/modelo`: entidades y resultados de consultas.
 - `src/main/resources`: tema visual y esquema de demostración H2.
-- `database/02_migracion.sql`: ampliación del esquema MySQL/MariaDB.
+- `database/02_migracion.sql`: migración inicial para una base versión 1.
+- `database/05_modulos_comerciales.sql`: visitas, tareas de seguimiento e historiales para una base versión 2.
 - `docs/capturas`: vistas de ejemplo de los paneles.
 
-No ejecuté ninguna migración contra tu servidor MySQL. Primero hay que respaldar la base y aplicar el script desde phpMyAdmin.
+El menú de cada rol está en su propia carpeta de `interfaz/paneles`. En la aplicación se agregaron agenda de visitas, tareas para agentes, ofertas/reservas con autorización administrativa, checklist documental, contactos alternativos, umbrales y generación de alertas, e historiales de precios y asignaciones.
+
+No ejecuté ninguna migración contra tu servidor MySQL. Para poder usar las visitas y los recordatorios, respaldá la base e importá `05_modulos_comerciales.sql` desde phpMyAdmin.

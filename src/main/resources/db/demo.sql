@@ -268,3 +268,110 @@ ALTER TABLE propiedades_cerradas ADD CONSTRAINT fk_cierre_tipo FOREIGN KEY(id_ti
 
 CREATE TABLE schema_version (version INT PRIMARY KEY, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
 INSERT INTO schema_version(version) VALUES(2);
+
+CREATE TABLE visitas (
+ id_visita INT AUTO_INCREMENT PRIMARY KEY, id_propiedad INT NOT NULL,
+ id_cliente INT NOT NULL, id_agente INT NOT NULL, fecha_hora TIMESTAMP NOT NULL,
+ estado VARCHAR(20) NOT NULL DEFAULT 'Programada', resultado TEXT NULL,
+ observaciones TEXT NULL, fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(id_propiedad) REFERENCES propiedades(id_propiedad),
+ FOREIGN KEY(id_cliente) REFERENCES usuarios(id_usuario),
+ FOREIGN KEY(id_agente) REFERENCES usuarios(id_usuario)
+);
+CREATE TABLE tareas_seguimiento (
+ id_tarea INT AUTO_INCREMENT PRIMARY KEY, id_agente INT NOT NULL,
+ id_cliente INT NOT NULL, id_propiedad INT NULL, titulo VARCHAR(180) NOT NULL,
+ detalle TEXT NULL, fecha_limite TIMESTAMP NOT NULL,
+ estado VARCHAR(20) NOT NULL DEFAULT 'Pendiente', fecha_completada TIMESTAMP NULL,
+ fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(id_agente) REFERENCES usuarios(id_usuario),
+ FOREIGN KEY(id_cliente) REFERENCES usuarios(id_usuario),
+ FOREIGN KEY(id_propiedad) REFERENCES propiedades(id_propiedad)
+);
+CREATE TABLE ofertas_cliente (
+ id_oferta INT AUTO_INCREMENT PRIMARY KEY, id_propiedad INT NOT NULL, id_cliente INT NOT NULL,
+ id_agente INT NOT NULL, id_tipo_transaccion INT NOT NULL, monto DECIMAL(12,2) NOT NULL,
+ moneda VARCHAR(3) NOT NULL, fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+ fecha_vencimiento DATE NULL, estado VARCHAR(20) NOT NULL DEFAULT 'Pendiente',
+ observaciones TEXT NULL, id_revisor INT NULL, fecha_revision TIMESTAMP NULL,
+ FOREIGN KEY(id_propiedad) REFERENCES propiedades(id_propiedad),
+ FOREIGN KEY(id_cliente) REFERENCES usuarios(id_usuario),
+ FOREIGN KEY(id_agente) REFERENCES usuarios(id_usuario),
+ FOREIGN KEY(id_tipo_transaccion) REFERENCES tipos_transaccion(id_tipo_transaccion),
+ FOREIGN KEY(id_revisor) REFERENCES usuarios(id_usuario)
+);
+CREATE TABLE reservas (
+ id_reserva INT AUTO_INCREMENT PRIMARY KEY, id_propiedad INT NOT NULL, id_cliente INT NOT NULL,
+ id_agente INT NOT NULL, id_tipo_transaccion INT NOT NULL, id_oferta INT NULL,
+ monto DECIMAL(12,2) NOT NULL, moneda VARCHAR(3) NOT NULL,
+ fecha_reserva TIMESTAMP DEFAULT CURRENT_TIMESTAMP, fecha_limite TIMESTAMP NOT NULL,
+ estado VARCHAR(20) NOT NULL DEFAULT 'Pendiente', estado_pago VARCHAR(20) NOT NULL DEFAULT 'Pendiente',
+ medio_pago VARCHAR(80) NULL, observaciones TEXT NULL, id_autorizador INT NULL,
+ FOREIGN KEY(id_propiedad) REFERENCES propiedades(id_propiedad),
+ FOREIGN KEY(id_cliente) REFERENCES usuarios(id_usuario),
+ FOREIGN KEY(id_agente) REFERENCES usuarios(id_usuario),
+ FOREIGN KEY(id_tipo_transaccion) REFERENCES tipos_transaccion(id_tipo_transaccion),
+ FOREIGN KEY(id_oferta) REFERENCES ofertas_cliente(id_oferta),
+ FOREIGN KEY(id_autorizador) REFERENCES usuarios(id_usuario)
+);
+CREATE TABLE historial_precios (
+ id_historial_precio INT AUTO_INCREMENT PRIMARY KEY, id_propiedad INT NOT NULL,
+ id_tipo_transaccion INT NOT NULL, id_usuario INT NOT NULL,
+ precio_anterior DECIMAL(12,2) NOT NULL, precio_nuevo DECIMAL(12,2) NOT NULL,
+ moneda VARCHAR(3) NOT NULL, motivo VARCHAR(500) NULL,
+ fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(id_propiedad) REFERENCES propiedades(id_propiedad),
+ FOREIGN KEY(id_tipo_transaccion) REFERENCES tipos_transaccion(id_tipo_transaccion),
+ FOREIGN KEY(id_usuario) REFERENCES usuarios(id_usuario)
+);
+CREATE TABLE historial_asignaciones (
+ id_asignacion INT AUTO_INCREMENT PRIMARY KEY, tipo_entidad VARCHAR(20) NOT NULL,
+ id_entidad INT NOT NULL, agente_anterior INT NULL, agente_nuevo INT NULL,
+ id_usuario_cambio INT NOT NULL, motivo VARCHAR(500) NULL, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(agente_anterior) REFERENCES usuarios(id_usuario),
+ FOREIGN KEY(agente_nuevo) REFERENCES usuarios(id_usuario),
+ FOREIGN KEY(id_usuario_cambio) REFERENCES usuarios(id_usuario)
+);
+CREATE TABLE requisitos_publicacion (
+ id_requisito INT AUTO_INCREMENT PRIMARY KEY, id_tipo_propiedad INT NULL,
+ nombre VARCHAR(120) NOT NULL, obligatorio BOOLEAN NOT NULL DEFAULT TRUE,
+ activo BOOLEAN NOT NULL DEFAULT TRUE,
+ FOREIGN KEY(id_tipo_propiedad) REFERENCES tipos_propiedad(id_tipo_propiedad)
+);
+CREATE TABLE checklist_publicacion (
+ id_propiedad INT NOT NULL, id_requisito INT NOT NULL, id_documento INT NULL,
+ estado VARCHAR(30) NOT NULL DEFAULT 'Pendiente', observaciones VARCHAR(500) NULL,
+ id_revisor INT NULL, fecha_revision TIMESTAMP NULL,
+ PRIMARY KEY(id_propiedad,id_requisito),
+ FOREIGN KEY(id_propiedad) REFERENCES propiedades(id_propiedad) ON DELETE CASCADE,
+ FOREIGN KEY(id_requisito) REFERENCES requisitos_publicacion(id_requisito),
+ FOREIGN KEY(id_documento) REFERENCES documentos(id_documento),
+ FOREIGN KEY(id_revisor) REFERENCES usuarios(id_usuario)
+);
+INSERT INTO requisitos_publicacion(id_tipo_propiedad,nombre,obligatorio) VALUES
+ (NULL,'Autorización de comercialización',TRUE),
+ (NULL,'Documento que acredita titularidad',TRUE),
+ (NULL,'Fotografías principales',TRUE);
+CREATE TABLE contactos_adicionales_cliente (
+ id_contacto INT AUTO_INCREMENT PRIMARY KEY, id_cliente INT NOT NULL,
+ tipo VARCHAR(20) NOT NULL, valor VARCHAR(255) NOT NULL,
+ es_principal BOOLEAN NOT NULL DEFAULT FALSE,
+ FOREIGN KEY(id_cliente) REFERENCES clientes(id_cliente) ON DELETE CASCADE
+);
+CREATE TABLE configuracion_alertas (
+ clave VARCHAR(80) PRIMARY KEY, valor VARCHAR(255) NOT NULL,
+ descripcion VARCHAR(255) NULL, actualizado_por INT NULL,
+ fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(actualizado_por) REFERENCES usuarios(id_usuario)
+);
+CREATE TABLE auditoria_cambios (
+ id_cambio INT AUTO_INCREMENT PRIMARY KEY, id_evento INT NULL,
+ entidad VARCHAR(40) NOT NULL, id_registro INT NOT NULL,
+ campo VARCHAR(80) NOT NULL, valor_anterior TEXT NULL, valor_nuevo TEXT NULL,
+ motivo VARCHAR(500) NULL,
+ FOREIGN KEY(id_evento) REFERENCES auditoria(id_evento)
+);
+INSERT INTO configuracion_alertas(clave,valor,descripcion) VALUES
+ ('dias_cliente_sin_contacto','14','Días sin contacto para alertar al agente.'),
+ ('dias_propiedad_sin_actividad','30','Días sin actividad para alertar al responsable.'),
+ ('dias_aviso_reserva','3','Días antes del vencimiento para avisar al equipo.');

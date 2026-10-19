@@ -15,8 +15,13 @@ Luego importá, en orden:
 
 1. `01_original.sql`.
 2. `02_migracion.sql`.
+3. `05_modulos_comerciales.sql` (visitas, tareas y trazabilidad de precios/asignaciones).
 
 En phpMyAdmin seleccioná primero la base y usá **Importar** para cada archivo. En el cliente SQL de línea de comandos se puede usar `SOURCE ruta/al/archivo.sql`.
+
+## Base que ya está en uso
+
+No vuelvas a importar `01_original.sql` ni `02_migracion.sql` sobre la base existente. Seleccioná `inmobiliaria` en phpMyAdmin e importá solamente `05_modulos_comerciales.sql`. Es una ampliación aditiva de la versión 2; no reemplaza tus usuarios ni propiedades. La aplicación usa esas tablas nuevas para la agenda de visitas, recordatorios y el historial comercial.
 
 ## Si ya existe una base
 
@@ -89,6 +94,8 @@ No guardes el archivo con credenciales en Git. Para una ruta de Windows dentro d
 Los campos originales `propiedades.id_tipo_transaccion`, `precio` y `moneda` se mantienen por compatibilidad y reflejan la primera oferta. Las consultas nuevas usan `propiedad_ofertas` como fuente de los precios por operación.
 
 `id_estado_verificacion` es el estado actual de moderación. `publicaciones` conserva cada solicitud. El estado comercial se gestiona aparte. No se agregó otro estado comercial "En venta": venta/alquiler son operaciones, no disponibilidad.
+
+La migración `05_modulos_comerciales.sql` agrega el soporte de visitas, recordatorios, ofertas y reservas, historial de precios/asignaciones, contactos alternativos, checklist documental, umbrales de alertas y auditoría detallada. La aplicación usa esas tablas en los paneles de administración, agente y cliente.
 
 ### Límite de validación
 
