@@ -1,3 +1,4 @@
+
 package ar.edu.nuevohogar;
 
 import ar.edu.nuevohogar.interfaz.AplicacionInmobiliaria;

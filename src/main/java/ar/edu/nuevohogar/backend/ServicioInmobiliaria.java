@@ -1479,11 +1479,59 @@ public final class ServicioInmobiliaria {
         });
     }
 
+    public record PropertyTax(String name, BigDecimal base, BigDecimal rate, String currency, String period) {
+        public PropertyTax {
+            if (name == null || name.isBlank() || name.length() > 120
+                    || period == null || period.isBlank() || period.length() > 80)
+                throw new IllegalArgumentException("Completá el impuesto y el período (máximo 120 y 80 caracteres).");
+            if (base == null || base.signum() < 0 || base.scale() > 2 || base.compareTo(new BigDecimal("9999999999.99")) > 0)
+                throw new IllegalArgumentException("La base debe ser positiva o cero, con hasta dos decimales.");
+            if (rate == null || rate.signum() < 0 || rate.compareTo(new BigDecimal("100")) > 0 || rate.scale() > 4)
+                throw new IllegalArgumentException("El porcentaje debe estar entre 0 y 100, con hasta cuatro decimales.");
+            if (!Set.of("ARS", "USD").contains(currency)) throw new IllegalArgumentException("Moneda inválida.");
+            name = name.trim();
+            period = period.trim();
+        }
+        public BigDecimal amount() {
+            return base.multiply(rate).divide(new BigDecimal("100"), 2, java.math.RoundingMode.HALF_UP);
+        }
+    }
+
+    public boolean canViewPrivateProperty(int id) {
+        if (!signedIn()) return false;
+        int actor = require(1, 2, 3);
+        Registro p = property(id);
+        return role() == 1 || (role() == 2 && agentCanAccessProperty(actor, id))
+                || (role() == 3 && p.id("id_propietario") == actor);
+    }
+
+    public List<Registro> propertyTaxes(int id) {
+        if (!canViewPrivateProperty(id)) throw new IllegalArgumentException("El cálculo de impuestos es privado.");
+        return dao.list("SELECT i.*, CONCAT(u.nombre,' ',u.apellido) AS autor FROM impuestos_propiedad i "
+                + "JOIN usuarios u ON u.id_usuario=i.id_usuario WHERE i.id_propiedad=? ORDER BY i.id_impuesto", id);
+    }
+
+    public void savePropertyTax(int id, PropertyTax tax) {
+        Objects.requireNonNull(tax);
+        int actor = require(1, 2, 3);
+        db.transaction(c -> {
+            Registro p = editable(c, id, actor);
+            if (!Set.of(1, 4).contains(p.id("id_estado_verificacion"))
+                    && !(role() != 3 && p.id("id_estado_verificacion") == 2))
+                throw new IllegalArgumentException("Guardá la propiedad como borrador antes de modificar sus impuestos.");
+            int taxId = insert(c, "INSERT INTO impuestos_propiedad(id_propiedad,nombre,base_imponible,porcentaje,importe,moneda,periodo,id_usuario) VALUES(?,?,?,?,?,?,?,?)",
+                    id, tax.name(), tax.base(), tax.rate(), tax.amount(), tax.currency(), tax.period(), actor);
+            audit(c, actor, "Cálculo de impuesto", "impuestos_propiedad", taxId,
+                    "Propiedad #" + id + " · " + tax.name() + " · " + tax.currency() + " " + tax.amount());
+            return null;
+        });
+    }
+
     public List<Registro> attachments(int id, boolean privateDocs) {
         Registro p = property(id);
         if (privateDocs) {
             int actor = require(1, 2, 3);
-            if (role() == 3 && p.id("id_propietario") != actor)
+            if (!canViewPrivateProperty(id))
                 throw new IllegalArgumentException("La documentación es privada.");
             return dao.list(
                     "SELECT id_documento AS id,tipo,nombre,archivo FROM documentos WHERE"
@@ -1523,7 +1571,8 @@ public final class ServicioInmobiliaria {
             db.transaction(
                     c -> {
                         Registro current = editable(c, id, actor);
-                        if (!Set.of(1, 4).contains(current.id("id_estado_verificacion")))
+                        if (!Set.of(1, 4).contains(current.id("id_estado_verificacion"))
+                                && !(!media && role() != 3 && current.id("id_estado_verificacion") == 2))
                             throw new IllegalArgumentException(
                                     "Guardá la propiedad como borrador antes de cambiar sus"
                                         + " archivos.");

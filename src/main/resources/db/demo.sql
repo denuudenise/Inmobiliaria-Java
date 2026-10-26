@@ -371,3 +371,20 @@ INSERT INTO configuracion_alertas(clave,valor,descripcion) SELECT seed.clave,see
  ('dias_aviso_reserva','3','Días antes del vencimiento para avisar al equipo.')) seed(clave,valor,descripcion) WHERE NOT EXISTS (SELECT 1 FROM configuracion_alertas c WHERE c.clave=seed.clave);
 
 INSERT INTO schema_version(version) SELECT 2 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE version=2);
+
+-- Cálculos manuales por propiedad. No modifica credenciales ni registros existentes.
+CREATE TABLE IF NOT EXISTS impuestos_propiedad (
+ id_impuesto INT AUTO_INCREMENT PRIMARY KEY,
+ id_propiedad INT NOT NULL,
+ nombre VARCHAR(120) NOT NULL,
+ base_imponible DECIMAL(12,2) NOT NULL,
+ porcentaje DECIMAL(7,4) NOT NULL,
+ importe DECIMAL(12,2) NOT NULL,
+ moneda VARCHAR(3) NOT NULL,
+ periodo VARCHAR(80) NOT NULL,
+ id_usuario INT NOT NULL,
+ fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(id_propiedad) REFERENCES propiedades(id_propiedad),
+ FOREIGN KEY(id_usuario) REFERENCES usuarios(id_usuario),
+ CHECK(base_imponible >= 0), CHECK(porcentaje >= 0 AND porcentaje <= 100), CHECK(importe >= 0)
+);

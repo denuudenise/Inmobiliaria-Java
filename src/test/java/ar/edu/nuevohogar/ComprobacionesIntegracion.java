@@ -165,7 +165,23 @@ public final class ComprobacionesIntegracion {
         client.attach(pid, doc, "Plano");
         check(client.attachments(pid, true).size() == 1, "Documento privado guardado");
         denied(() -> other.attachments(pid, true), "Documentación inaccesible para otro cliente");
+        var tax = new ServicioInmobiliaria.PropertyTax("Municipal", new BigDecimal("100000.00"), new BigDecimal("1.25"), "ARS", "Octubre 2026");
+        check(tax.amount().compareTo(new BigDecimal("1250.00")) == 0, "Impuesto calcula base por porcentaje sin errores de coma flotante");
+        check(new ServicioInmobiliaria.PropertyTax("Redondeo", new BigDecimal("1.00"), new BigDecimal("0.5"), "ARS", "Prueba").amount().compareTo(new BigDecimal("0.01")) == 0, "Impuesto redondea centavos de forma consistente");
+        denied(() -> new ServicioInmobiliaria.PropertyTax("Inválido", BigDecimal.ONE, new BigDecimal("101"), "ARS", "Prueba"), "Rechaza tasas superiores a 100");
+        denied(() -> new ServicioInmobiliaria.PropertyTax("Inválido", new BigDecimal("-1"), BigDecimal.ONE, "ARS", "Prueba"), "Rechaza base negativa");
+        client.savePropertyTax(pid, tax);
+        check(admin.propertyTaxes(pid).size() == 1, "Administración consulta el cálculo guardado antes de publicar");
+        denied(() -> other.propertyTaxes(pid), "Otro cliente no accede a impuestos privados");
+        denied(() -> guest.propertyTaxes(pid), "Invitado no accede a impuestos privados");
+        denied(() -> agent.propertyTaxes(pid), "Agente ajeno no accede a impuestos de otra cartera");
+        denied(() -> other.savePropertyTax(pid, tax), "Otro cliente no modifica impuestos ajenos");
         client.submit(pid);
+        check(admin.attachments(pid, true).size() == 1 && admin.propertyTaxes(pid).size() == 1,
+                "Documentos y cálculos disponibles durante la revisión");
+        denied(() -> client.savePropertyTax(pid, tax), "Cliente no cambia impuestos mientras se revisa su publicación");
+        admin.attach(pid, doc, "Escritura");
+        check(admin.attachments(pid, true).size() == 2, "Administración puede completar la documentación pendiente");
         check(admin.checklistPublicacion(pid).size() == 3,
                 "Enviar una propiedad crea el checklist de documentación obligatoria");
         int requisito = admin.checklistPublicacion(pid).getFirst().id("id_requisito");
@@ -215,7 +231,11 @@ public final class ComprobacionesIntegracion {
         denied(
                 () -> other.attachments(pid, true),
                 "Documentos siguen privados con publicación aprobada");
+        denied(() -> other.propertyTaxes(pid), "Impuestos permanecen privados después de publicar");
+        denied(() -> agent.attachments(pid, true), "Documentos publicados también respetan la cartera del agente");
         admin.saveClient(cid, Set.of(), aid);
+        check(agent.propertyTaxes(pid).size() == 1 && agent.attachments(pid, true).size() == 2,
+                "Agente asignado consulta documentos y cálculos de su propiedad");
         check(admin.historialAsignaciones(cid).size() == 1,
                 "Las reasignaciones de clientes guardan agente anterior y nuevo");
         check(!new ConsultasSQL(db).list("SELECT * FROM auditoria_cambios WHERE entidad='clientes' AND id_registro=? AND campo='agente_asignado'", cid).isEmpty(),

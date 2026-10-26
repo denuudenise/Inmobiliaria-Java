@@ -100,3 +100,11 @@ La migración `05_modulos_comerciales.sql` agrega el soporte de visitas, recorda
 ### Límite de validación
 
 Los scripts se prepararon para MySQL 8 / MariaDB 10.4 o posterior, tomando como base el dump entregado. La suite funcional ejecutada utiliza H2 en modo MySQL. En este equipo no se dispuso de un servidor MySQL/MariaDB para ejecutar la migración real; debe probarse primero en una copia de tu base.
+
+## Impuestos por propiedad (versión actual)
+
+Aplicar `06_impuestos_propiedad.sql` después de las migraciones 02 y 05 sobre MySQL/MariaDB.
+Es aditiva y se puede repetir: crea la tabla de cálculos manuales, sin cambiar usuarios ni credenciales.
+Respaldar primero la base existente. H2 incorpora esta tabla al iniciar.
+Los cálculos guardan base, porcentaje, importe, moneda y período; no aplican tasas oficiales.
+Planos, escrituras y comprobantes usan la tabla privada `documentos` ya existente.

@@ -1066,14 +1066,13 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void showGalleryItem(StackPane main, ElementoGaleria item, double width, double height) {
+        stopActiveMedia();
+        Path path = item.path();
+        if (!item.video()) {
+            main.getChildren().setAll(photoFrame(path, width, height));
+            return;
+        }
         try {
-            Path path = item.path();
-            boolean video = item.video();
-            stopActiveMedia();
-            if (!video) {
-                main.getChildren().setAll(photoFrame(path, width, height));
-                return;
-            }
             Media media = new Media(path.toUri().toString());
             MediaPlayer player = new MediaPlayer(media);
             activeMediaPlayer = player;
@@ -1083,41 +1082,92 @@ public final class AplicacionInmobiliaria extends Application {
             view.fitHeightProperty().bind(main.heightProperty());
             StackPane videoSurface = new StackPane(view);
             videoSurface.setStyle("-fx-background-color: #101820;");
-            Button play = secondary("Ⅱ  Pausar", () -> {});
+            Button play = secondary("Cargando…", () -> {});
+            play.setDisable(true);
+            boolean[] ended = {false};
             play.setOnAction(e -> {
-                if (player.getStatus() == MediaPlayer.Status.PLAYING) {
-                    player.pause(); play.setText("▶  Reproducir");
+                if (player.getStatus() == MediaPlayer.Status.PLAYING && !ended[0]) {
+                    player.pause();
                 } else {
-                    player.play(); play.setText("Ⅱ  Pausar");
+                    if (ended[0]) {
+                        player.seek(Duration.ZERO);
+                        ended[0] = false;
+                    }
+                    player.play();
+                    play.setText("Ⅱ  Pausar");
                 }
             });
-            Slider progress = new Slider();
-            progress.setMin(0);
+            Slider progress = new Slider(0, 1, 0);
+            progress.setDisable(true);
             Label time = label("00:00 / --:--", "gallery-video-time");
-            player.setOnReady(() -> {
+            Runnable ready = () -> {
+                if (activeMediaPlayer != player) return;
                 Duration total = player.getTotalDuration();
-                progress.setMax(Math.max(0, total.toSeconds()));
+                boolean seekable = !total.isUnknown() && !total.isIndefinite() && total.greaterThan(Duration.ZERO);
+                progress.setMax(seekable ? total.toSeconds() : 1);
+                progress.setDisable(!seekable);
+                play.setDisable(false);
+                play.setText("▶  Reproducir");
                 time.setText("00:00 / " + mediaTime(total));
-                player.play();
+            };
+            player.setOnReady(ready);
+            player.setOnPlaying(() -> play.setText("Ⅱ  Pausar"));
+            player.setOnPaused(() -> play.setText("▶  Reproducir"));
+            player.setOnEndOfMedia(() -> {
+                ended[0] = true;
+                play.setText("↻  Volver a reproducir");
             });
             player.currentTimeProperty().addListener((obs, old, current) -> {
-                if (!progress.isValueChanging()) progress.setValue(current.toSeconds());
+                if (!progress.isValueChanging() && !progress.isPressed()) progress.setValue(current.toSeconds());
                 time.setText(mediaTime(current) + " / " + mediaTime(player.getTotalDuration()));
             });
-            progress.setOnMouseReleased(e -> player.seek(Duration.seconds(progress.getValue())));
-            player.setOnEndOfMedia(() -> play.setText("▶  Reproducir"));
-            player.setOnError(() -> time.setText("No reproducible · usá MP4 H.264"));
+            progress.setOnMouseReleased(e -> {
+                ended[0] = false;
+                player.seek(Duration.seconds(progress.getValue()));
+            });
+            Runnable failed = () -> {
+                if (activeMediaPlayer != player) return;
+                Throwable failure = player.getError() != null ? player.getError() : media.getError();
+                if (failure != null) failure.printStackTrace();
+                stopActiveMedia();
+                showVideoUnavailable(main, path);
+            };
+            player.setOnError(failed);
+            player.setOnHalted(failed);
+            media.setOnError(failed);
             HBox controls = new HBox(12, play, progress, time);
             controls.setAlignment(Pos.CENTER);
+            controls.setMaxHeight(Region.USE_PREF_SIZE);
             HBox.setHgrow(progress, Priority.ALWAYS);
             controls.getStyleClass().add("gallery-video-controls");
             StackPane.setAlignment(controls, Pos.BOTTOM_CENTER);
             videoSurface.getChildren().add(controls);
             main.getChildren().setAll(videoSurface);
+            if (player.getError() != null || media.getError() != null) failed.run();
+            else {
+                if (player.getStatus() == MediaPlayer.Status.READY) ready.run();
+                player.setAutoPlay(true);
+            }
         } catch (RuntimeException e) {
+            e.printStackTrace();
             stopActiveMedia();
-            main.getChildren().setAll(label("No se pudo abrir este archivo multimedia.", "subtitle"));
+            showVideoUnavailable(main, path);
         }
+    }
+
+    private void showVideoUnavailable(StackPane main, Path path) {
+        Label message = label("No se pudo reproducir este video dentro del sistema. "
+                + "Para verlo aquí, usá MP4 con video H.264 y audio AAC. "
+                + "También podés abrir el archivo con el reproductor de tu equipo.", "subtitle");
+        message.setWrapText(true);
+        message.setMaxWidth(460);
+        VBox fallback = new VBox(16, message, secondary("Abrir video en el equipo", () -> safe(() -> {
+            if (!Files.isRegularFile(path)) throw new IllegalArgumentException("El archivo de video no está disponible en esta computadora.");
+            getHostServices().showDocument(path.toUri().toString());
+        })));
+        fallback.setAlignment(Pos.CENTER);
+        fallback.setPadding(new Insets(24));
+        main.getChildren().setAll(fallback);
     }
 
     private static String mediaTime(Duration duration) {
@@ -1229,27 +1279,33 @@ public final class AplicacionInmobiliaria extends Application {
             priceLine.setAlignment(Pos.CENTER_LEFT);
             facts.getChildren().add(priceLine);
         }
-        HBox specifications = new HBox(12,
+        TilePane specifications = new TilePane(12, 12,
                 propertyDetailFact("⌂", metric(property, "dormitorios", ""), "dormitorios"),
                 propertyDetailFact("♧", metric(property, "banos", ""), "baños"),
                 propertyDetailFact("▧", metric(property, "superficie_total_m2", " m²"), "totales"),
                 propertyDetailFact("▧", metric(property, "superficie_cubierta_m2", " m²"), "cubiertos"));
+        specifications.setPrefColumns(2);
+        specifications.setPrefTileWidth(170);
+        specifications.setTileAlignment(Pos.CENTER_LEFT);
         facts.getChildren().addAll(specifications,
                 label("Ambientes: " + metric(property, "ambientes", "") + "   ·   Antigüedad: " + metric(property, "antiguedad_anos", " años"), "property-extra-facts"));
 
         Button contact = button("Contactar", () -> contactProperty(id));
         contact.getStyleClass().add("property-detail-button");
         Button favorite = secondary("♡  Guardar", () -> saveFavorite(id));
-        HBox actions = new HBox(10, contact, favorite);
+        FlowPane actions = new FlowPane(10, 10, contact, favorite);
         if (service.signedIn() && service.role() == 3) {
             actions.getChildren().add(secondary("Solicitar visita", this::requestVisit));
             actions.getChildren().add(button("Hacer una oferta", () -> makeOffer(id)));
         }
         facts.getChildren().add(actions);
 
-        HBox hero = new HBox(20, propertyGallery(property, 650, 370), facts);
+        double galleryWidth = Math.min(650, Math.max(320, stage.getScene().getWidth() - (service.role() == 3 ? 100 : 360)));
+        FlowPane hero = new FlowPane(20, 20, propertyGallery(property, galleryWidth, galleryWidth * 370 / 650), facts);
         hero.setAlignment(Pos.TOP_LEFT);
-        HBox.setHgrow(facts, Priority.ALWAYS);
+        hero.prefWrapLengthProperty().bind(content.widthProperty());
+        facts.setMinWidth(400);
+        facts.prefWidthProperty().bind(javafx.beans.binding.Bindings.max(400, hero.widthProperty().subtract(galleryWidth + 32)));
         facts.setMaxWidth(Double.MAX_VALUE);
         content.getChildren().addAll(back, hero);
 
@@ -1286,11 +1342,15 @@ public final class AplicacionInmobiliaria extends Application {
         HBox.setHgrow(tabs, Priority.ALWAYS);
         content.getChildren().add(lower);
 
-        if (service.signedIn()
-                && (service.role() != 3
-                        || property.id("id_propietario") == service.current().id("id_usuario"))) {
-            VBox docs = card(label("Documentación privada", "section-title"));
+        if (service.canViewPrivateProperty(id)) {
+            VBox docs = card(label("Planos, escrituras y comprobantes", "section-title"),
+                    label("Documentación privada para el propietario y el equipo responsable. Disponible durante la revisión de publicación.", "subtitle"));
+            docs.setId("property-documents");
             addFileButtons(docs, id, true);
+            if (Set.of(1, 4).contains(property.id("id_estado_verificacion"))
+                    || (service.role() != 3 && property.id("id_estado_verificacion") == 2))
+                docs.getChildren().add(secondary("Subir documentación", () -> upload(id, true)));
+            content.getChildren().add(propertyTaxPanel(property));
             content.getChildren()
                     .addAll(
                             docs,
@@ -1312,8 +1372,16 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private HBox propertyDetailFact(String icon, String value, String caption) {
-        VBox text = new VBox(2, label(value, "property-detail-fact-value"), label(caption, "property-detail-fact-label"));
-        HBox box = new HBox(8, label(icon, "property-detail-fact-icon"), text);
+        Label amount = label(value, "property-detail-fact-value");
+        Label name = label(caption, "property-detail-fact-label");
+        amount.setWrapText(false);
+        name.setWrapText(false);
+        amount.setMinWidth(Region.USE_PREF_SIZE);
+        name.setMinWidth(Region.USE_PREF_SIZE);
+        VBox text = new VBox(4, amount, name);
+        HBox box = new HBox(12, label(icon, "property-detail-fact-icon"), text);
+        box.setMinWidth(170);
+        box.setPrefWidth(170);
         box.setAlignment(Pos.CENTER_LEFT);
         box.getStyleClass().add("property-detail-fact");
         HBox.setHgrow(box, Priority.ALWAYS);
@@ -1364,6 +1432,103 @@ public final class AplicacionInmobiliaria extends Application {
         info("Propiedad agregada a tus intereses.");
     }
 
+    private VBox pendingDocumentsPanel(Map<Path, String> pending) {
+        VBox list = new VBox(8);
+        VBox box = card(label("Planos, escrituras y comprobantes", "section-title"),
+                label("PDF, JPG o PNG, hasta 50 MB por archivo. Son privados y se guardan antes de enviar la publicación.", "subtitle"), list);
+        Runnable refresh = () -> {
+            list.getChildren().clear();
+            pending.forEach((path, type) -> {
+                Label name = label(type + " · " + path.getFileName(), "subtitle");
+                name.setWrapText(true);
+                list.getChildren().add(new FlowPane(10, 6, name, secondary("Quitar", () -> {
+                    pending.remove(path);
+                    list.getChildren().removeIf(node -> node instanceof FlowPane pane && pane.getChildren().contains(name));
+                })));
+            });
+        };
+        FlowPane buttons = new FlowPane(10, 10);
+        for (String type : List.of("Plano", "Escritura", "Impuesto", "Servicio"))
+            buttons.getChildren().add(secondary("Agregar " + type.toLowerCase(Locale.ROOT), () -> {
+                FileChooser chooser = new FileChooser();
+                chooser.setTitle("Seleccionar " + type.toLowerCase(Locale.ROOT));
+                chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("PDF o imágenes", "*.pdf", "*.jpg", "*.jpeg", "*.png"));
+                var files = chooser.showOpenMultipleDialog(stage);
+                if (files != null) for (var file : files) pending.put(file.toPath(), type);
+                refresh.run();
+            }));
+        box.getChildren().add(buttons);
+        return box;
+    }
+
+    private Formulario taxForm() {
+        Formulario form = new Formulario(2);
+        form.text("nombre", "Nombre del impuesto *", "");
+        form.text("periodo", "Período o concepto *", "");
+        form.text("base", "Base imponible (sin separador de miles) *", "");
+        form.text("porcentaje", "Porcentaje *", "");
+        form.choice("moneda", "Moneda", "ARS", "ARS", "USD");
+        return form;
+    }
+
+    private ServicioInmobiliaria.PropertyTax readTax(Formulario form) {
+        try {
+            return new ServicioInmobiliaria.PropertyTax(form.value("nombre"),
+                    new BigDecimal(form.value("base").replace(',', '.')),
+                    new BigDecimal(form.value("porcentaje").replace(',', '.')),
+                    form.value("moneda"), form.value("periodo"));
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Ingresá números válidos en base y porcentaje, sin separadores de miles.");
+        }
+    }
+
+    private VBox pendingTaxesPanel(List<ServicioInmobiliaria.PropertyTax> pending) {
+        Formulario form = taxForm();
+        VBox results = new VBox(10);
+        return card(label("Cálculo de impuestos", "section-title"),
+                label("Estimación manual: base × porcentaje ÷ 100. Agregá cada cálculo para guardarlo junto con la propiedad. No determina tasas oficiales.", "subtitle"),
+                form, secondary("Calcular y agregar", () -> {
+                    var tax = readTax(form);
+                    pending.add(tax);
+                    Label value = label(tax.name() + " · " + tax.period() + " · " + tax.currency() + " " + formatNumber(tax.amount()), "section-title");
+                    FlowPane line = new FlowPane(10, 8);
+                    line.getChildren().addAll(value, secondary("Quitar", () -> { pending.remove(tax); results.getChildren().remove(line); }));
+                    results.getChildren().add(line);
+                }), results);
+    }
+
+    private VBox taxSummary(Registro tax) {
+        return new VBox(5,
+                label(tax.text("nombre") + " · " + tax.text("periodo"), "section-title"),
+                label(tax.text("moneda") + " " + tax.text("base_imponible") + " × " + tax.text("porcentaje") + "% = "
+                        + tax.text("moneda") + " " + tax.text("importe"), "subtitle"));
+    }
+
+    private VBox propertyTaxPanel(Registro property) {
+        int id = property.id("id_propiedad");
+        VBox box = card(label("Impuestos de la propiedad", "section-title"),
+                label("Estimaciones manuales para revisión interna. Los importes corresponden al período y moneda de cada cálculo.", "subtitle"));
+        box.setId("property-taxes");
+        List<Registro> taxes = service.propertyTaxes(id);
+        if (taxes.isEmpty()) box.getChildren().add(label("Todavía no hay cálculos guardados.", "subtitle"));
+        for (Registro tax : taxes) box.getChildren().add(taxSummary(tax));
+        if (Set.of(1, 4).contains(property.id("id_estado_verificacion"))
+                || (service.role() != 3 && property.id("id_estado_verificacion") == 2))
+            box.getChildren().add(secondary("Calcular un impuesto", () -> {
+                Formulario form = taxForm();
+                Label result = label("Ingresá la base y el porcentaje para calcular el importe.", "subtitle");
+                VBox editor = new VBox(14, form, secondary("Calcular", () -> {
+                    var tax = readTax(form);
+                    result.setText("Importe estimado: " + tax.currency() + " " + formatNumber(tax.amount()));
+                }), result);
+                dialog("Calcular impuesto", editor, "Guardar cálculo", () -> {
+                    service.savePropertyTax(id, readTax(form));
+                    propertyDetails(id);
+                });
+            }));
+        return box;
+    }
+
     private void addFileButtons(VBox box, int id, boolean docs) {
         List<Registro> files = service.attachments(id, docs);
         if (files.isEmpty())
@@ -1385,30 +1550,26 @@ public final class AplicacionInmobiliaria extends Application {
                                     }));
     }
 
-    private void upload(int id) {
+    private void upload(int id) { upload(id, false); }
+
+    private void upload(int id, boolean documentsOnly) {
         Formulario f = new Formulario();
-        f.choice(
-                "tipo",
-                "Tipo de archivo",
-                "Imagen",
-                "Imagen",
-                "Video",
-                "Plano",
-                "Escritura",
-                "Servicio",
-                "Impuesto");
+        f.choice("tipo", "Tipo de archivo", documentsOnly ? "Plano" : "Imagen",
+                documentsOnly ? new String[]{"Plano", "Escritura", "Servicio", "Impuesto"}
+                        : new String[]{"Imagen", "Video", "Plano", "Escritura", "Servicio", "Impuesto"});
         Label filename = label("Ningún archivo seleccionado · Máximo 50 MB", "subtitle");
         Path[] path = {null};
         VBox box =
                 card(
-                        label("La propiedad debe estar en borrador o rechazada.", "subtitle"),
+                        label("Los archivos se cargan en borrador o rechazo. El equipo también puede agregar documentación privada durante la revisión.", "subtitle"),
                         f,
                         filename,
                         secondary(
                                 "Seleccionar archivo",
                                 () -> {
                                     FileChooser fc = new FileChooser();
-                                    fc.setTitle("Adjuntar documentación o multimedia");
+                                    fc.setTitle(documentsOnly ? "Subir planos, escrituras o comprobantes" : "Adjuntar documentación o multimedia");
+                                    if (documentsOnly) fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("Documentos PDF o imágenes", "*.pdf", "*.jpg", "*.jpeg", "*.png"));
                                     java.io.File file = fc.showOpenDialog(stage);
                                     if (file != null) {
                                         path[0] = file.toPath();
@@ -1850,6 +2011,14 @@ public final class AplicacionInmobiliaria extends Application {
                     }
                     refreshMedia.run();
                 }));
+        Map<Path, String> pendingDocuments = new LinkedHashMap<>();
+        List<ServicioInmobiliaria.PropertyTax> pendingTaxes = new ArrayList<>();
+        VBox documentsBox = pendingDocumentsPanel(pendingDocuments);
+        VBox taxesBox = pendingTaxesPanel(pendingTaxes);
+        if (edit) {
+            addFileButtons(documentsBox, p.id("id_propiedad"), true);
+            for (Registro tax : service.propertyTaxes(p.id("id_propiedad"))) taxesBox.getChildren().add(taxSummary(tax));
+        }
         VBox offersBox =
                 card(
                         label("Operaciones y precios", "section-title"),
@@ -1912,6 +2081,16 @@ public final class AplicacionInmobiliaria extends Application {
                         savedMediaCount[0]++;
                         refreshMedia.run();
                     }
+                    while (!pendingDocuments.isEmpty()) {
+                        var document = pendingDocuments.entrySet().iterator().next();
+                        try { service.attach(id, document.getKey(), document.getValue()); }
+                        catch (Exception e) { throw new IllegalArgumentException("No se pudo cargar " + document.getKey().getFileName() + ": " + e.getMessage(), e); }
+                        pendingDocuments.remove(document.getKey());
+                    }
+                    while (!pendingTaxes.isEmpty()) {
+                        service.savePropertyTax(id, pendingTaxes.getFirst());
+                        pendingTaxes.removeFirst();
+                    }
                     if (submit) service.submit(id);
                     propertyDetails(id);
                 };
@@ -1919,6 +2098,8 @@ public final class AplicacionInmobiliaria extends Application {
                 .addAll(
                         card(f),
                         mediaBox,
+                        documentsBox,
+                        taxesBox,
                         offersBox,
                         card(
                                 label("Características adicionales", "section-title"),
@@ -2064,9 +2245,17 @@ public final class AplicacionInmobiliaria extends Application {
     private void reviewForm(Registro r, boolean approve) {
         Formulario f = new Formulario();
         f.area("observaciones", approve ? "Observaciones (opcional)" : "Motivo del rechazo *", "");
+        int propertyId = r.id("id_propiedad");
+        VBox evidence = new VBox(12, label("Documentación de la propiedad", "section-title"));
+        addFileButtons(evidence, propertyId, true);
+        evidence.getChildren().add(label("Cálculos de impuestos", "section-title"));
+        List<Registro> taxes = service.propertyTaxes(propertyId);
+        if (taxes.isEmpty()) evidence.getChildren().add(label("Sin cálculos guardados.", "subtitle"));
+        for (Registro tax : taxes) evidence.getChildren().add(taxSummary(tax));
+        evidence.getChildren().add(f);
         dialog(
                 (approve ? "Aprobar" : "Rechazar") + " solicitud #" + r.id("id_publicacion"),
-                f,
+                evidence,
                 "Confirmar",
                 () -> {
                     service.review(r.id("id_publicacion"), approve, f.value("observaciones"));
