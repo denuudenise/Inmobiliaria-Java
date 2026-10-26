@@ -1501,7 +1501,7 @@ public final class ServicioInmobiliaria {
         Registro p = property(id);
         if (role() == 3 && p.id("id_propietario") != actor)
             throw new IllegalArgumentException("Solo podés adjuntar archivos a tus propiedades.");
-        Set<String> image = Set.of("jpg", "jpeg", "png"), video = Set.of("mp4", "webm");
+        Set<String> image = Set.of("jpg", "jpeg", "png"), video = Set.of("mp4");
         String name = source.getFileName().toString();
         String ext = name.substring(name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
         boolean media = type.equals("Imagen") || type.equals("Video");

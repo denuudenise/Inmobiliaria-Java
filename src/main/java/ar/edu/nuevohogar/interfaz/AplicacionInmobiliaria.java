@@ -21,9 +21,13 @@ import javafx.scene.chart.PieChart;
 import javafx.scene.control.*;
 import javafx.scene.image.*;
 import javafx.scene.layout.*;
+import javafx.scene.media.Media;
+import javafx.scene.media.MediaPlayer;
+import javafx.scene.media.MediaView;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.*;
 import javafx.stage.*;
+import javafx.util.Duration;
 
 import java.math.BigDecimal;
 import java.nio.file.*;
@@ -36,11 +40,14 @@ import java.util.function.*;
 
 /** Presentación JavaFX: catálogo y paneles por rol sobre los mismos servicios. */
 public final class AplicacionInmobiliaria extends Application {
+    private record ElementoGaleria(Path path, boolean video) {}
+
     private ServicioInmobiliaria service;
     private Stage stage;
     private final BorderPane root = new BorderPane();
     private VBox content;
     private String activePage = "Catálogo";
+    private MediaPlayer activeMediaPlayer;
 
     @Override
     public void start(Stage stage) {
@@ -370,6 +377,7 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void page(String title, String subtitle) {
+        stopActiveMedia();
         activePage = title;
         content = new VBox(22);
         content.getStyleClass().add("page");
@@ -1012,31 +1020,118 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private Node propertyGallery(Registro property, double width, double height) {
-        List<Path> photos = propertyImagePaths(property);
+        List<ElementoGaleria> items = service.attachments(property.id("id_propiedad"), false).stream()
+                .filter(file -> file.text("tipo").equals("Imagen") || file.text("tipo").equals("Video"))
+                .map(file -> {
+                    try {
+                        Path path = service.attachmentPath(property.id("id_propiedad"), file.id("id"), false);
+                        return Files.isRegularFile(path)
+                                ? new ElementoGaleria(path, file.text("tipo").equals("Video")) : null;
+                    } catch (IllegalArgumentException e) {
+                        return null;
+                    }
+                })
+                .filter(Objects::nonNull)
+                .toList();
         StackPane main = new StackPane();
         main.setPrefSize(width, height);
         main.setMinSize(width, height);
         main.setMaxSize(width, height);
         main.getStyleClass().add("detail-gallery-main");
-        if (photos.isEmpty()) {
+        if (items.isEmpty()) {
             Label empty = label("FOTOGRAFÍAS PENDIENTES", "photo-empty-badge");
             main.getChildren().addAll(house(width, height, property.id("id_propiedad")), empty);
             StackPane.setAlignment(empty, Pos.TOP_LEFT);
             StackPane.setMargin(empty, new Insets(14));
         } else {
-            main.getChildren().add(photoFrame(photos.getFirst(), width, height));
+            showGalleryItem(main, items.getFirst(), width, height);
         }
         HBox thumbnails = new HBox(9);
         thumbnails.getStyleClass().add("property-thumbnails");
-        for (Path photo : photos.stream().limit(6).toList()) {
-            StackPane thumbnail = new StackPane(photoFrame(photo, 92, 64));
+        for (ElementoGaleria item : items) {
+            StackPane thumbnail = new StackPane();
+            if (item.video()) {
+                thumbnail.getStyleClass().add("gallery-video-thumb");
+                thumbnail.getChildren().add(label("▶  VIDEO", "gallery-video-label"));
+            } else {
+                thumbnail.getChildren().add(photoFrame(item.path(), 92, 64));
+            }
             thumbnail.getStyleClass().add("property-thumbnail");
-            thumbnail.setOnMouseClicked(e -> main.getChildren().setAll(photoFrame(photo, width, height)));
+            thumbnail.setOnMouseClicked(e -> showGalleryItem(main, item, width, height));
             thumbnails.getChildren().add(thumbnail);
         }
         VBox gallery = new VBox(10, main, thumbnails);
         gallery.getStyleClass().add("property-gallery");
         return gallery;
+    }
+
+    private void showGalleryItem(StackPane main, ElementoGaleria item, double width, double height) {
+        try {
+            Path path = item.path();
+            boolean video = item.video();
+            stopActiveMedia();
+            if (!video) {
+                main.getChildren().setAll(photoFrame(path, width, height));
+                return;
+            }
+            Media media = new Media(path.toUri().toString());
+            MediaPlayer player = new MediaPlayer(media);
+            activeMediaPlayer = player;
+            MediaView view = new MediaView(player);
+            view.setPreserveRatio(true);
+            view.fitWidthProperty().bind(main.widthProperty());
+            view.fitHeightProperty().bind(main.heightProperty());
+            StackPane videoSurface = new StackPane(view);
+            videoSurface.setStyle("-fx-background-color: #101820;");
+            Button play = secondary("Ⅱ  Pausar", () -> {});
+            play.setOnAction(e -> {
+                if (player.getStatus() == MediaPlayer.Status.PLAYING) {
+                    player.pause(); play.setText("▶  Reproducir");
+                } else {
+                    player.play(); play.setText("Ⅱ  Pausar");
+                }
+            });
+            Slider progress = new Slider();
+            progress.setMin(0);
+            Label time = label("00:00 / --:--", "gallery-video-time");
+            player.setOnReady(() -> {
+                Duration total = player.getTotalDuration();
+                progress.setMax(Math.max(0, total.toSeconds()));
+                time.setText("00:00 / " + mediaTime(total));
+                player.play();
+            });
+            player.currentTimeProperty().addListener((obs, old, current) -> {
+                if (!progress.isValueChanging()) progress.setValue(current.toSeconds());
+                time.setText(mediaTime(current) + " / " + mediaTime(player.getTotalDuration()));
+            });
+            progress.setOnMouseReleased(e -> player.seek(Duration.seconds(progress.getValue())));
+            player.setOnEndOfMedia(() -> play.setText("▶  Reproducir"));
+            player.setOnError(() -> time.setText("No reproducible · usá MP4 H.264"));
+            HBox controls = new HBox(12, play, progress, time);
+            controls.setAlignment(Pos.CENTER);
+            HBox.setHgrow(progress, Priority.ALWAYS);
+            controls.getStyleClass().add("gallery-video-controls");
+            StackPane.setAlignment(controls, Pos.BOTTOM_CENTER);
+            videoSurface.getChildren().add(controls);
+            main.getChildren().setAll(videoSurface);
+        } catch (RuntimeException e) {
+            stopActiveMedia();
+            main.getChildren().setAll(label("No se pudo abrir este archivo multimedia.", "subtitle"));
+        }
+    }
+
+    private static String mediaTime(Duration duration) {
+        if (duration == null || duration.isUnknown() || duration.isIndefinite()) return "--:--";
+        long seconds = Math.max(0, (long) duration.toSeconds());
+        return String.format(Locale.ROOT, "%02d:%02d", seconds / 60, seconds % 60);
+    }
+
+    private void stopActiveMedia() {
+        if (activeMediaPlayer != null) {
+            activeMediaPlayer.stop();
+            activeMediaPlayer.dispose();
+            activeMediaPlayer = null;
+        }
     }
 
     private VBox propertyCard(Registro property) {
@@ -1191,17 +1286,6 @@ public final class AplicacionInmobiliaria extends Application {
         HBox.setHgrow(tabs, Priority.ALWAYS);
         content.getChildren().add(lower);
 
-        List<Registro> videos = service.attachments(id, false).stream().filter(file -> file.text("tipo").equals("Video")).toList();
-        if (!videos.isEmpty()) {
-            VBox media = card(label("Videos de la propiedad", "section-title"));
-            for (Registro video : videos)
-                media.getChildren().add(secondary(video.text("tipo") + " · Reproducir video", () -> {
-                    Path path = service.attachmentPath(id, video.id("id"), false);
-                    if (!Files.isRegularFile(path)) throw new IllegalArgumentException("El video ya no está disponible.");
-                    getHostServices().showDocument(path.toUri().toString());
-                }));
-            content.getChildren().add(media);
-        }
         if (service.signedIn()
                 && (service.role() != 3
                         || property.id("id_propietario") == service.current().id("id_usuario"))) {
@@ -1748,7 +1832,7 @@ public final class AplicacionInmobiliaria extends Application {
         };
         VBox mediaBox = card(
                 label("Fotos y videos de la propiedad", "section-title"),
-                label("Podés seleccionar varias imágenes JPG, JPEG o PNG y videos MP4 o WEBM. "
+                label("Podés seleccionar varias imágenes JPG, JPEG o PNG y videos MP4 (H.264). "
                         + "Cada archivo puede pesar hasta 50 MB. Se cargarán antes de enviar la "
                         + "solicitud para que el equipo pueda revisarlos.", "subtitle"),
                 existingMedia,
@@ -1757,7 +1841,7 @@ public final class AplicacionInmobiliaria extends Application {
                     FileChooser chooser = new FileChooser();
                     chooser.setTitle("Seleccionar fotos o videos de la propiedad");
                     chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(
-                            "Imágenes y videos", "*.jpg", "*.jpeg", "*.png", "*.mp4", "*.webm"));
+                            "Imágenes y videos", "*.jpg", "*.jpeg", "*.png", "*.mp4"));
                     List<java.io.File> files = chooser.showOpenMultipleDialog(stage);
                     if (files == null) return;
                     for (java.io.File file : files) {
@@ -1816,7 +1900,7 @@ public final class AplicacionInmobiliaria extends Application {
                     while (!pendingMedia.isEmpty()) {
                         Path path = pendingMedia.get(0);
                         String filename = path.getFileName().toString().toLowerCase(Locale.ROOT);
-                        String mediaType = filename.endsWith(".mp4") || filename.endsWith(".webm")
+                        String mediaType = filename.endsWith(".mp4")
                                 ? "Video" : "Imagen";
                         try {
                             service.attach(id, path, mediaType);
