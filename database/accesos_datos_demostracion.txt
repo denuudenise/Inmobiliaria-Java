@@ -1,0 +1,28 @@
+ACCESOS DE DEMOSTRACIÓN — NUEVO HOGAR
+Todos los usuarios que agrega datos_demostracion_30_inmuebles.sql usan:
+Contraseña: DemoHogar2026!
+
+AGENTES (3 nuevos; junto a los 2 que ya existen quedan 5 agentes)
+camila.sosa@demo.nuevohogar.local
+matias.roldan@demo.nuevohogar.local
+florencia.paz@demo.nuevohogar.local
+
+CLIENTES (15 nuevos)
+sofia.martinez@demo.nuevohogar.local
+tomas.acosta@demo.nuevohogar.local
+valentina.ruiz@demo.nuevohogar.local
+joaquin.herrera@demo.nuevohogar.local
+martina.vega@demo.nuevohogar.local
+nicolas.benitez@demo.nuevohogar.local
+agustina.luna@demo.nuevohogar.local
+facundo.molina@demo.nuevohogar.local
+luciana.castro@demo.nuevohogar.local
+bruno.figueroa@demo.nuevohogar.local
+catalina.ibarra@demo.nuevohogar.local
+santiago.pereyra@demo.nuevohogar.local
+milagros.navarro@demo.nuevohogar.local
+federico.arias@demo.nuevohogar.local
+julieta.medina@demo.nuevohogar.local
+
+Son credenciales ficticias para mostrar la aplicación. Cambialas o eliminá estos registros
+antes de usar la base con información real.
