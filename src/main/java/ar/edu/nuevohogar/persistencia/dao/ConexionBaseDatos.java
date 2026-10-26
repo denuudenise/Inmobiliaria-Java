@@ -6,9 +6,12 @@ import java.sql.*;
 import java.util.Properties;
 
 public final class ConexionBaseDatos {
+    private static final Object DEMO_INITIALIZATION_LOCK = new Object();
     private final String url, user, password;
     public final boolean demo;
     public final Path storage;
+    public final Path webMediaRoot;
+    public final String webMediaPrefix;
 
     public ConexionBaseDatos() throws Exception {
         Properties p = new Properties();
@@ -28,6 +31,12 @@ public final class ConexionBaseDatos {
                         .toAbsolutePath()
                         .normalize();
         Files.createDirectories(storage);
+        String webRoot = p.getProperty("media.web.root", "").trim();
+        webMediaRoot = webRoot.isEmpty() ? null : Path.of(webRoot).toAbsolutePath().normalize();
+        String prefix = p.getProperty("media.web.prefix", "/Inmobiliaria/");
+        webMediaPrefix = prefix.endsWith("/") ? prefix : prefix + "/";
+        if (!webMediaPrefix.startsWith("/") || webMediaPrefix.equals("/"))
+            throw new IllegalArgumentException("El prefijo multimedia debe identificar la carpeta de la web.");
     }
 
     public ConexionBaseDatos(String url, Path storage) {
@@ -36,6 +45,8 @@ public final class ConexionBaseDatos {
         password = "";
         demo = true;
         this.storage = storage.toAbsolutePath().normalize();
+        webMediaRoot = null;
+        webMediaPrefix = "/Inmobiliaria/";
     }
 
     public Connection open() throws SQLException {
@@ -44,18 +55,19 @@ public final class ConexionBaseDatos {
 
     public void initialize() throws Exception {
         if (!demo) return; // La base real se prepara explícitamente con los scripts SQL.
-        try (var c = open();
-                var in = ConexionBaseDatos.class.getResourceAsStream("/db/demo.sql")) {
-            try (var rs = c.getMetaData().getTables(null, null, "schema_version", null)) {
-                if (rs.next()) return;
+        synchronized (DEMO_INITIALIZATION_LOCK) {
+            try (var c = open();
+                    var in = ConexionBaseDatos.class.getResourceAsStream("/db/demo.sql")) {
+                // H2 confirma DDL por separado: un inicio interrumpido puede dejar tablas parciales.
+                // El script agrega únicamente lo que falta, incluso si ya existe schema_version.
+                if (in == null) throw new IOException("Falta db/demo.sql");
+                String sql = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                for (String statement : sql.split(";"))
+                    if (!statement.isBlank())
+                        try (var s = c.createStatement()) {
+                            s.execute(statement);
+                        }
             }
-            if (in == null) throw new IOException("Falta db/demo.sql");
-            String sql = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-            for (String statement : sql.split(";"))
-                if (!statement.isBlank())
-                    try (var s = c.createStatement()) {
-                        s.execute(statement);
-                    }
         }
     }
 

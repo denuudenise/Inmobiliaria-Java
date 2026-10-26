@@ -65,6 +65,39 @@ public final class ComprobacionesIntegracion {
     public static void main(String[] args) throws Exception {
         Path work = Path.of("target/test-files");
         Files.createDirectories(work);
+        Path localMedia = work.resolve("private").toAbsolutePath();
+        Path webMedia = work.resolve("web").toAbsolutePath();
+        Files.createDirectories(webMedia.resolve("archivos"));
+        Files.writeString(webMedia.resolve("archivos/foto.jpg"), "test");
+        check(RutasAdjuntos.resolve(localMedia, webMedia, "/Inmobiliaria/",
+                "/Inmobiliaria/archivos/foto.jpg", false).equals(webMedia.resolve("archivos/foto.jpg")),
+                "Fotos de la web se resuelven en su carpeta compartida");
+        check(RutasAdjuntos.resolve(localMedia, webMedia, "/Inmobiliaria/", "demo/foto.jpg", false)
+                .equals(localMedia.resolve("demo/foto.jpg")), "Adjuntos locales conservan su carpeta");
+        denied(() -> RutasAdjuntos.resolve(localMedia, webMedia, "/Inmobiliaria/",
+                "/Inmobiliaria/../../secreto", false), "Ruta web no escapa de su carpeta");
+        denied(() -> RutasAdjuntos.resolve(localMedia, webMedia, "/Inmobiliaria/",
+                "/Inmobiliaria/archivos/foto.jpg", true), "Documentos privados no se buscan en la web pública");
+        denied(() -> RutasAdjuntos.resolve(localMedia, webMedia, "/Inmobiliaria/",
+                "C:/Windows/win.ini", false), "Adjuntos rechazan rutas absolutas ajenas");
+        ConexionBaseDatos partial = new ConexionBaseDatos(
+                "jdbc:h2:mem:partial;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1", work);
+        try (var in = ConexionBaseDatos.class.getResourceAsStream("/db/demo.sql");
+                var connection = partial.open(); var statement = connection.createStatement()) {
+            String script = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            for (String sql : script.split(";")) {
+                if (sql.contains("ALTER TABLE preferencias_cliente ADD COLUMN")) break;
+                if (!sql.isBlank()) statement.execute(sql);
+            }
+            statement.execute("UPDATE caracteristicas SET nombre='Nombre conservado' WHERE id_caracteristica=8");
+            statement.execute("INSERT INTO schema_version(version) VALUES (1)");
+        }
+        partial.initialize();
+        partial.initialize();
+        check(new ConsultasSQL(partial).list("SELECT * FROM caracteristicas WHERE id_caracteristica=8 AND nombre='Nombre conservado'").size() == 1,
+                "Inicio interrumpido se recupera incluso con marcador previo, sin sobrescribir datos");
+        check(new ConsultasSQL(partial).list("SELECT * FROM schema_version WHERE version=2").size() == 1,
+                "La versión completa se registra al terminar la inicialización");
         ConexionBaseDatos db =
                 new ConexionBaseDatos(
                         "jdbc:h2:mem:integration;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
@@ -323,6 +356,15 @@ public final class ComprobacionesIntegracion {
         seedDb.initialize();
         DatosDemostracion.seed(seedDb);
         DatosDemostracion.seed(seedDb);
+        try (var connection = seedDb.open(); var statement = connection.createStatement()) {
+            statement.execute("UPDATE configuracion_alertas SET valor='99' WHERE clave='dias_cliente_sin_contacto'");
+        }
+        seedDb.initialize();
+        for (String account : List.of("admin", "agente", "cliente")) {
+            new ServicioInmobiliaria(seedDb).login(account + "@nuevohogar.demo", DatosDemostracion.PASSWORD);
+        }
+        check(new ConsultasSQL(seedDb).list("SELECT * FROM configuracion_alertas WHERE clave='dias_cliente_sin_contacto' AND valor='99'").size() == 1,
+                "Reiniciar conserva ajustes y acceso de los tres roles");
         check(
                 new ConsultasSQL(seedDb).list("SELECT * FROM propiedades").size() == 6,
                 "Carga de demostración repetible sin duplicados");

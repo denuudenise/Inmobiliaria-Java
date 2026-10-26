@@ -142,3 +142,49 @@
 .tab-pane { -fx-background-color: #fffdf8; -fx-background-radius: 11; -fx-border-color: #e5e1d8; -fx-border-radius: 11; -fx-padding: 8; }
 .tab-pane .tab-header-area .tab-header-background { -fx-background-color: #f0f3ee; -fx-background-radius: 8 8 0 0; }
 .tab-pane .tab:selected { -fx-background-color: #fffdf8; }
+
+/* Catálogo: la paleta de Nuevo Hogar con una presentación editorial propia. */
+.catalog-page { -fx-background-color: #fbf9f4; -fx-padding: 24 30 34; -fx-spacing: 22; }
+.catalog-welcome { -fx-background-color: #f2ede3; -fx-background-radius: 16; -fx-border-color: #e5e1d8; -fx-border-radius: 16; }
+.catalog-introduction { -fx-padding: 24 30; }
+.catalog-eyebrow { -fx-text-fill: #4f7b8c; -fx-font-size: 10px; -fx-font-weight: bold; }
+.catalog-hero-title { -fx-font-family: "Georgia"; -fx-font-size: 32px; -fx-text-fill: #123b57; -fx-line-spacing: 1; }
+.catalog-hero-copy { -fx-text-fill: #59707c; -fx-font-size: 13px; }
+.catalog-atmosphere { -fx-background-image: url("images/catalog-interior.jpg"); -fx-background-size: cover; -fx-background-position: center bottom; -fx-background-radius: 0 16 16 0; }
+.catalog-filters { -fx-background-color: #fffefa; -fx-padding: 16 20 10; -fx-spacing: 8; -fx-background-radius: 12; -fx-border-radius: 12; -fx-border-color: #e5e1d8; -fx-effect: dropshadow(gaussian, rgba(18,59,87,.045), 12, 0, 0, 3); }
+.catalog-filters .form .label { -fx-font-size: 11px; -fx-text-fill: #536e7c; }
+.catalog-filters .text-field, .catalog-filters .combo-box { -fx-background-color: #fffefa; -fx-border-color: #dce1dd; -fx-padding: 8; -fx-border-radius: 7; -fx-background-radius: 7; }
+.catalog-filters .text-field:focused, .catalog-filters .combo-box:focused { -fx-border-color: #317a9e; }
+.catalog-search-button { -fx-background-color: #317a9e; -fx-background-radius: 7; -fx-padding: 11 22; -fx-font-weight: bold; }
+.catalog-search-button:hover { -fx-background-color: #236689; }
+.catalog-advanced > .title { -fx-background-color: transparent; -fx-padding: 9 0; }
+.catalog-advanced > .title > .text { -fx-fill: #536e7c; -fx-font-size: 11px; }
+.catalog-advanced > .content { -fx-background-color: #fffefa; -fx-border-color: #e5e1d8; -fx-border-width: 1 0 0 0; -fx-padding: 16 0; }
+.catalog-reset { -fx-background-color: transparent; -fx-text-fill: #647d88; -fx-font-size: 11px; -fx-padding: 9 4; }
+.catalog-reset:hover { -fx-background-color: #edf2f1; }
+.catalog-page .catalog-section-title { -fx-font-size: 23px; -fx-text-fill: #123b57; }
+.catalog-results-copy { -fx-font-size: 12px; -fx-text-fill: #71808a; }
+.catalog-page .catalog-result-count { -fx-background-color: #e8f0f2; -fx-text-fill: #416577; -fx-padding: 7 12; }
+.catalog-page .property-card { -fx-background-color: #fffefa; -fx-background-radius: 12; -fx-border-color: #e5e1d8; -fx-border-radius: 12; -fx-effect: dropshadow(gaussian, rgba(18,59,87,.065), 12, 0, 0, 3); }
+.catalog-page .property-card:hover { -fx-border-color: #a9bec3; -fx-effect: dropshadow(gaussian, rgba(18,59,87,.11), 15, 0, 0, 4); }
+.catalog-photo { -fx-background-color: linear-gradient(to bottom right, #e8eeeb, #eee9de); -fx-background-radius: 11 11 0 0; }
+.catalog-placeholder-icon { -fx-fill: transparent; -fx-stroke: #8aa09f; -fx-stroke-width: 2; -fx-stroke-line-cap: round; -fx-stroke-line-join: round; }
+.catalog-photo-note { -fx-font-size: 10px; -fx-text-fill: #708582; }
+.catalog-page .property-operation-badge { -fx-background-color: #fffefaf5; -fx-text-fill: #123b57; -fx-font-size: 10px; -fx-padding: 5 10; -fx-effect: null; }
+.catalog-page .property-card-body { -fx-padding: 16 18 18; -fx-spacing: 8; }
+.catalog-page .property-type { -fx-text-fill: #638293; -fx-font-size: 10px; -fx-font-weight: bold; }
+.catalog-page .property-card-title { -fx-font-size: 16px; -fx-text-fill: #233f51; }
+.catalog-page .property-card-location { -fx-font-size: 12px; -fx-text-fill: #71808a; }
+.catalog-page .property-card-facts { -fx-padding: 9 0; -fx-border-color: #eeeae2 transparent #eeeae2 transparent; -fx-border-width: 1 0 1 0; }
+.catalog-page .property-fact-value { -fx-font-size: 11px; -fx-text-fill: #617783; }
+.catalog-page .property-card-price { -fx-font-size: 20px; -fx-font-family: "Georgia"; -fx-text-fill: #123b57; -fx-padding: 5 0; }
+.catalog-page .property-detail-button { -fx-background-color: #e8f0f2; -fx-text-fill: #285c75; -fx-font-weight: bold; -fx-background-radius: 7; -fx-padding: 10 14; }
+.catalog-page .property-detail-button:hover { -fx-background-color: #317a9e; -fx-text-fill: white; }
+/* Diálogos: sin iconos decorativos que puedan confundirse con acciones. */
+.app-dialog { -fx-graphic: null; -fx-background-color: #fffefa; -fx-padding: 20; }
+.app-dialog > .header-panel { -fx-background-color: #fffefa; -fx-padding: 0 0 16 0; }
+.app-dialog > .header-panel .label { -fx-font-size: 19px; -fx-font-weight: bold; -fx-text-fill: #224e65; }
+.app-dialog > .content.label { -fx-font-size: 13px; -fx-font-weight: normal; -fx-text-fill: #334a56; -fx-padding: 0 0 16 0; }
+.app-dialog > .button-bar > .container { -fx-padding: 12 0 0 0; }
+.app-dialog .button { -fx-padding: 10 24; -fx-background-radius: 7; -fx-border-radius: 7; -fx-border-width: 2; -fx-border-color: transparent; }
+.app-dialog .button:focused { -fx-border-color: #88afbf; }

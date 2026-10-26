@@ -1,0 +1,1 @@
+catalog-interior.jpg: imagen ambiental tomada del repositorio de referencia del mismo proyecto, https://github.com/denuudenise/Inmobiliaria (recursos/imagenes/interior.jpg). Se utiliza solamente en la cabecera decorativa del catálogo, no como fotografía de una propiedad. Licencia del repositorio: REFERENCE-LICENSE.txt.

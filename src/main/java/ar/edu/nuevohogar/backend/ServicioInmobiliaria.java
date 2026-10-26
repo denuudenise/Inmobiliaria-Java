@@ -1546,10 +1546,8 @@ public final class ServicioInmobiliaria {
                         .filter(x -> x.id("id") == attachment)
                         .findFirst()
                         .orElseThrow();
-        Path p = db.storage.resolve(r.text("archivo")).normalize();
-        if (!p.startsWith(db.storage))
-            throw new IllegalArgumentException("Ruta de archivo inválida.");
-        return p;
+        return ar.edu.nuevohogar.persistencia.dao.RutasAdjuntos.resolve(
+                db.storage, db.webMediaRoot, db.webMediaPrefix, r.text("archivo"), privateDoc);
     }
 
     public void bootstrapAdmin(Map<String, String> d, String password) {

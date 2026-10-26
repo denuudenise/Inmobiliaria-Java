@@ -82,8 +82,8 @@ public final class AplicacionInmobiliaria extends Application {
                                     18,
                                     title("No pudimos abrir la base de datos"),
                                     label(
-                                            "Revisá config.properties, que MySQL esté iniciado y"
-                                                    + " que la base tenga el esquema del proyecto.",
+                                            "No se pudo preparar la base configurada. Consultá el detalle"
+                                                    + " del aviso antes de reintentar.",
                                             "subtitle"),
                                     button("Reintentar", () -> start(stage)));
                     box.getStyleClass().add("page");
@@ -318,24 +318,55 @@ public final class AplicacionInmobiliaria extends Application {
         while (cause.getCause() != null) cause = cause.getCause();
         String message = Objects.toString(e.getMessage(), "Ocurrió un error inesperado.");
         if (cause instanceof SQLException sql) {
-            message +=
-                    "\n\nDetalle de MySQL: "
-                            + Objects.toString(sql.getMessage(), "Error SQL")
-                            + (sql.getSQLState() == null ? "" : "\nCódigo SQL: " + sql.getSQLState());
-        } else if (cause != e && cause.getMessage() != null) {
-            message += "\n\nDetalle: " + cause.getMessage();
+            message = "23505".equals(sql.getSQLState())
+                    ? "Ya existe un registro con esos datos. No se pudo completar la operación."
+                    : "No se pudo completar la operación con la base de datos.";
+        }
+        if (cause instanceof SQLException || cause != e || message.length() > 350) {
+            TextArea details = new TextArea(Objects.toString(cause.getMessage(), e.toString()));
+            details.setEditable(false);
+            details.setWrapText(true);
+            details.setPrefRowCount(6);
+            details.setPrefHeight(160);
+            details.setMaxHeight(160);
+            a.getDialogPane().setExpandableContent(details);
+            a.getDialogPane().setExpanded(false);
+            if (message.length() > 350) message = "No se pudo completar la acción. Consultá los detalles.";
         }
         a.setContentText(message);
         a.setResizable(true);
         a.getDialogPane().setPrefWidth(560);
+        styleDialog(a);
         a.showAndWait();
     }
 
     private void info(String message) {
         Alert a = new Alert(Alert.AlertType.INFORMATION, message, ButtonType.OK);
         a.initOwner(stage);
+        a.setTitle("Nuevo Hogar");
         a.setHeaderText(null);
+        styleDialog(a);
         a.showAndWait();
+    }
+
+    /** Avisos sin gráficos que parezcan botones y con acciones siempre legibles. */
+    private void styleDialog(Dialog<?> dialog) {
+        DialogPane pane = dialog.getDialogPane();
+        String stylesheet = Objects.requireNonNull(getClass().getResource("/theme.css")).toExternalForm();
+        if (!pane.getStylesheets().contains(stylesheet)) pane.getStylesheets().add(stylesheet);
+        pane.getStyleClass().add("app-dialog");
+        pane.setGraphic(null);
+        for (ButtonType type : pane.getButtonTypes()) {
+            if (pane.lookupButton(type) instanceof Button button) {
+                if (type == ButtonType.OK) button.setText("Aceptar");
+                else if (type == ButtonType.CANCEL) button.setText("Cancelar");
+                else if (type == ButtonType.YES) button.setText("Sí");
+                else if (type == ButtonType.NO) button.setText("No");
+                button.setMinWidth(Region.USE_PREF_SIZE);
+                button.setMinHeight(40);
+                if (type.getButtonData().isCancelButton()) button.getStyleClass().add("secondary");
+            }
+        }
     }
 
     private void page(String title, String subtitle) {
@@ -393,6 +424,7 @@ public final class AplicacionInmobiliaria extends Application {
                                 error(ex);
                             }
                         });
+        styleDialog(d);
         d.showAndWait();
     }
 
@@ -631,42 +663,64 @@ public final class AplicacionInmobiliaria extends Application {
                         ? "Propiedades en venta"
                         : operationFilter == 2
                                 ? "Propiedades en alquiler"
-                                : "Encontrá la propiedad que estás buscando",
+                                : "Catálogo de propiedades",
                 "Casas, departamentos y terrenos. Un lugar para cada nueva etapa.");
-        HBox hero =
-                row(
-                        new VBox(
-                                12,
-                                title("El próximo capítulo\nde tu vida."),
-                                label(
-                                        "Explorá las propiedades aprobadas por nuestro equipo.",
-                                        "subtitle")),
-                        house(220, 130, 0));
-        hero.getStyleClass().add("hero");
-        content.getChildren().add(hero);
-        Formulario filter = new Formulario(4);
-        filter.text("q", "Buscar por título, dirección o localidad", "");
+        content.getStyleClass().add("catalog-page");
+        content.getChildren().clear();
+        VBox introduction = new VBox(12,
+                label("NUEVO HOGAR  /  PROPIEDADES", "catalog-eyebrow"),
+                label(operationFilter == 1 ? "Un lugar para\nllamar tuyo." : operationFilter == 2
+                        ? "Tu próxima etapa\nempieza acá." : "Encontrá un lugar\npara tu próxima historia.", "catalog-hero-title"),
+                label("Explorá, compará y elegí tu próximo espacio.", "catalog-hero-copy"));
+        introduction.getStyleClass().add("catalog-introduction");
+        introduction.setAlignment(Pos.CENTER_LEFT);
+        introduction.setMinWidth(0);
+        StackPane atmosphere = new StackPane();
+        atmosphere.getStyleClass().add("catalog-atmosphere");
+        atmosphere.setAccessibleText("Imagen ambiental de un living, ilustrativa del catálogo");
+        GridPane welcome = new GridPane();
+        welcome.getStyleClass().add("catalog-welcome");
+        ColumnConstraints textColumn = new ColumnConstraints(); textColumn.setPercentWidth(56);
+        ColumnConstraints photoColumn = new ColumnConstraints(); photoColumn.setPercentWidth(44);
+        welcome.getColumnConstraints().addAll(textColumn, photoColumn);
+        RowConstraints heroRow = new RowConstraints(); heroRow.setPercentHeight(100);
+        welcome.getRowConstraints().add(heroRow);
+        welcome.add(introduction, 0, 0); welcome.add(atmosphere, 1, 0);
+        welcome.setMinHeight(208); welcome.setPrefHeight(208);
+        Rectangle heroClip = new Rectangle();
+        heroClip.widthProperty().bind(welcome.widthProperty()); heroClip.heightProperty().bind(welcome.heightProperty());
+        heroClip.setArcWidth(30); heroClip.setArcHeight(30); welcome.setClip(heroClip);
+        content.getChildren().add(welcome);
+        Formulario filter = new Formulario(3);
+        TextField query = filter.text("q", "Ubicación o propiedad", "");
+        query.setPromptText("Localidad, dirección o título");
         filter.rows("type", "Tipo de propiedad", service.lookup("tipos_propiedad"), 0, true);
         filter.rows(
                 "operation", "Operación", service.lookup("tipos_transaccion"), operationFilter, true);
-        filter.text("max", "Precio máximo (opcional)", "");
-        filter.choice("currency", "Moneda del precio máximo", "USD", "USD", "ARS");
-        filter.text("beds", "Dormitorios mínimos", "0");
-        filter.text("capacity", "Capacidad mínima", "0");
+        Formulario extra = new Formulario(4);
+        extra.text("max", "Precio máximo", "").setPromptText("Sin límite");
+        extra.choice("currency", "Moneda", "USD", "USD", "ARS");
+        extra.text("beds", "Dormitorios mínimos", "0");
+        extra.text("capacity", "Capacidad mínima", "0");
         Map<Integer, CheckBox> features = featureChecks(Set.of());
-        FlowPane cards = new FlowPane(18, 18);
+        FlowPane cards = new FlowPane(20, 22);
+        javafx.beans.binding.DoubleBinding tileWidth = javafx.beans.binding.Bindings.createDoubleBinding(() -> {
+            double available = Math.max(280, cards.getWidth());
+            int columns = Math.max(1, Math.min(4, (int) ((available + 20) / 300)));
+            return Math.floor((available - (columns - 1) * 20) / columns) - 2;
+        }, cards.widthProperty());
         Label count = label("", "catalog-result-count");
         Runnable search =
                 () -> {
                     BigDecimal max =
-                            filter.value("max").isBlank() ? null : money(filter.value("max"));
+                            extra.value("max").isBlank() ? null : money(extra.value("max"));
                     if (max != null && max.signum() < 0)
                         throw new IllegalArgumentException(
                                 "El precio máximo no puede ser negativo.");
                     int type = number(filter.value("type")),
                             operation = number(filter.value("operation"));
-                    int beds = number(filter.value("beds")),
-                            capacity = number(filter.value("capacity"));
+                    int beds = number(extra.value("beds")),
+                            capacity = number(extra.value("capacity"));
                     if (beds < 0 || capacity < 0)
                         throw new IllegalArgumentException(
                                 "Los filtros numéricos no pueden ser negativos.");
@@ -677,13 +731,19 @@ public final class AplicacionInmobiliaria extends Application {
                                     type == 0 ? null : type,
                                     operation == 0 ? null : operation,
                                     max,
-                                    filter.value("currency"),
+                                    extra.value("currency"),
                                     beds,
                                     capacity,
                                     checked(features));
                     cards.getChildren().clear();
-                    count.setText(rows.size() + " propiedades encontradas");
-                    for (Registro p : rows) cards.getChildren().add(propertyCard(p, operation));
+                    count.setText(rows.size() == 1 ? "1 propiedad" : rows.size() + " propiedades");
+                    for (Registro p : rows) {
+                        VBox propertyCard = propertyCard(p, operation);
+                        propertyCard.prefWidthProperty().bind(tileWidth);
+                        propertyCard.minWidthProperty().bind(tileWidth);
+                        propertyCard.maxWidthProperty().bind(tileWidth);
+                        cards.getChildren().add(propertyCard);
+                    }
                     if (rows.isEmpty())
                         cards.getChildren()
                                 .add(
@@ -694,18 +754,71 @@ public final class AplicacionInmobiliaria extends Application {
                                                 label(
                                                         "Probá con otra localidad o ampliá los"
                                                                 + " filtros.",
-                                                        "subtitle")));
+                                                        "subtitle"),
+                                                secondary("Limpiar filtros", () -> catalog(operationFilter))));
                 };
         TitledPane advanced =
-                new TitledPane("Características", flow(features.values().toArray(Node[]::new)));
+                new TitledPane("Más filtros · precio y características",
+                        new VBox(16, extra, label("Características", "subtitle"), flow(features.values().toArray(Node[]::new))));
+        advanced.getStyleClass().add("catalog-advanced");
         advanced.setExpanded(false);
+        Region resultGap = new Region(); HBox.setHgrow(resultGap, Priority.ALWAYS);
         HBox resultsTitle = new HBox(12,
-                label("Propiedades destacadas", "catalog-section-title"),
-                count);
+                new VBox(5, label("Descubrí las propiedades", "catalog-section-title"),
+                        label("Opciones para vivir, trabajar o invertir.", "catalog-results-copy")), resultGap, count);
         resultsTitle.setAlignment(Pos.CENTER_LEFT);
+        Button searchButton = button("Buscar  →", search);
+        searchButton.getStyleClass().add("catalog-search-button");
+        searchButton.setMinWidth(128);
+        query.setOnAction(e -> safe(search));
+        HBox primaryFilters = row(filter, searchButton);
+        primaryFilters.setAlignment(Pos.BOTTOM_LEFT);
+        HBox.setHgrow(filter, Priority.ALWAYS);
+        Button reset = secondary("Limpiar búsqueda", () -> catalog(operationFilter));
+        reset.getStyleClass().add("catalog-reset");
+        HBox additionalFilters = row(advanced, reset);
+        additionalFilters.setAlignment(Pos.TOP_LEFT);
+        advanced.setMaxWidth(Double.MAX_VALUE);
+        VBox filters = card(primaryFilters, additionalFilters);
+        HBox.setHgrow(advanced, Priority.ALWAYS);
+        filters.getStyleClass().add("catalog-filters");
         content.getChildren()
-                .addAll(card(filter, advanced, button("Buscar propiedades", search)), resultsTitle, cards);
+                .addAll(filters, resultsTitle, cards);
         search.run();
+    }
+
+    private StackPane catalogPhoto(Registro property) {
+        StackPane frame = new StackPane();
+        frame.setMinWidth(0);
+        frame.setMinHeight(172); frame.setPrefHeight(172); frame.setMaxHeight(172);
+        frame.getStyleClass().add("catalog-photo");
+        List<Path> paths = propertyImagePaths(property);
+        Image photo = paths.isEmpty() ? null : new Image(paths.getFirst().toUri().toString(), 1200, 800, true, true);
+        if (photo != null && !photo.isError()) {
+            ImageView view = new ImageView(photo);
+            view.fitWidthProperty().bind(frame.widthProperty()); view.setFitHeight(172);
+            Runnable crop = () -> {
+                double ratio = Math.max(1, frame.getWidth()) / 172.0;
+                double width = Math.min(photo.getWidth(), photo.getHeight() * ratio);
+                double height = width / ratio;
+                view.setViewport(new Rectangle2D((photo.getWidth() - width) / 2,
+                        (photo.getHeight() - height) / 2, width, height));
+            };
+            frame.widthProperty().addListener((o, a, b) -> crop.run()); crop.run();
+            frame.getChildren().add(view);
+        } else {
+            SVGPath outline = new SVGPath();
+            outline.setContent("M 8 52 L 52 16 L 96 52 M 20 44 L 20 98 L 84 98 L 84 44 M 43 98 L 43 68 L 61 68 L 61 98 M 28 54 L 36 54 L 36 63 L 28 63 Z M 68 54 L 76 54 L 76 63 L 68 63 Z");
+            outline.getStyleClass().add("catalog-placeholder-icon");
+            outline.setScaleX(.58); outline.setScaleY(.58);
+            StackPane icon = new StackPane(outline); icon.setMaxHeight(65);
+            VBox empty = new VBox(2, icon, label("Fotografías próximamente", "catalog-photo-note"));
+            empty.setAlignment(Pos.CENTER);
+            frame.getChildren().add(empty);
+        }
+        Rectangle clip = new Rectangle(); clip.widthProperty().bind(frame.widthProperty()); clip.setHeight(172);
+        clip.setArcWidth(20); clip.setArcHeight(20); frame.setClip(clip);
+        return frame;
     }
 
     private Map<Integer, CheckBox> featureChecks(Set<Integer> selected) {
@@ -730,7 +843,15 @@ public final class AplicacionInmobiliaria extends Application {
     private List<Path> propertyImagePaths(Registro property) {
         return service.attachments(property.id("id_propiedad"), false).stream()
                 .filter(file -> file.text("tipo").equals("Imagen"))
-                .map(file -> service.attachmentPath(property.id("id_propiedad"), file.id("id"), false))
+                .map(file -> {
+                    try {
+                        return service.attachmentPath(property.id("id_propiedad"), file.id("id"), false);
+                    } catch (IllegalArgumentException e) {
+                        // Un adjunto antiguo o no disponible no debe impedir abrir el catálogo.
+                        return null;
+                    }
+                })
+                .filter(Objects::nonNull)
                 .filter(Files::isRegularFile)
                 .toList();
     }
@@ -803,29 +924,34 @@ public final class AplicacionInmobiliaria extends Application {
                 .findFirst().orElse(offers.isEmpty() ? null : offers.getFirst());
         String operation = offer == null ? "Consultar" : offer.text("operacion");
 
-        StackPane image = new StackPane(propertyVisual(property, 258, 164));
-        image.setPrefSize(258, 164);
-        image.setMinSize(258, 164);
-        image.setMaxSize(258, 164);
-        Label badge = label(operation.equalsIgnoreCase("Alquiler") ? "Alquiler" : "Venta", "property-operation-badge");
+        StackPane image = catalogPhoto(property);
+        Label badge = label(operation, "property-operation-badge");
         StackPane.setAlignment(badge, Pos.TOP_LEFT);
         StackPane.setMargin(badge, new Insets(12));
         image.getChildren().add(badge);
 
         Label title = label(property.text("titulo"), "property-card-title");
         title.setMinHeight(42);
+        title.setPrefHeight(42);
+        title.setMaxHeight(42);
+        Tooltip.install(title, new Tooltip(property.text("titulo")));
         Label location = label("⌖  " + property.text("localidad"), "property-card-location");
+        location.setMinHeight(28);
+        location.setMaxHeight(28);
         HBox facts = new HBox(12,
-                propertyMiniFact("⌂", metric(property, "dormitorios", "")),
-                propertyMiniFact("♧", metric(property, "banos", "")),
-                propertyMiniFact("▧", metric(property, "superficie_total_m2", " m²")));
+                label(metric(property, "dormitorios", " dorm."), "property-fact-value"),
+                label(metric(property, "banos", " baños"), "property-fact-value"),
+                label(metric(property, "superficie_total_m2", " m²"), "property-fact-value"));
         facts.getStyleClass().add("property-card-facts");
         Label price = label(offer == null ? "Consultar precio" : formatOffer(offer), "property-card-price");
         Button details = button("Ver detalle  →", () -> propertyDetails(id));
         details.getStyleClass().add("property-detail-button");
         details.setMaxWidth(Double.MAX_VALUE);
 
-        VBox body = new VBox(8, label(property.text("tipo"), "property-type"), title, location, facts, price, details);
+        Region space = new Region();
+        VBox.setVgrow(space, Priority.ALWAYS);
+        VBox body = new VBox(8, label(property.text("tipo"), "property-type"), title, location, facts, space, price, details);
+        VBox.setVgrow(body, Priority.ALWAYS);
         body.getStyleClass().add("property-card-body");
         VBox card = new VBox(0, image, body);
         card.getStyleClass().add("property-card");
@@ -2415,7 +2541,11 @@ public final class AplicacionInmobiliaria extends Application {
                                                                     ButtonType.YES,
                                                                     ButtonType.NO);
                                                     a.initOwner(stage);
+                                                    a.setTitle("Confirmar desactivación");
                                                     a.setHeaderText(null);
+                                                    styleDialog(a);
+                                                    ((Button) a.getDialogPane().lookupButton(ButtonType.YES)).setText("Desactivar");
+                                                    ((Button) a.getDialogPane().lookupButton(ButtonType.NO)).setText("Cancelar");
                                                     if (a.showAndWait().orElse(ButtonType.NO)
                                                             == ButtonType.YES) {
                                                         service.setActive(u.id("id"), false);
