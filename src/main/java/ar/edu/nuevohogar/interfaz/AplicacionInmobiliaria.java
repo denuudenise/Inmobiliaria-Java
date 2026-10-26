@@ -540,13 +540,18 @@ public final class AplicacionInmobiliaria extends Application {
                     else dashboard();
                 });
         Button signup = secondary("Crear una cuenta", this::register);
+        Button forgotPassword = secondary("¿Olvidaste tu contraseña?", this::forgotPassword);
         submit.setMaxWidth(Double.MAX_VALUE);
         signup.setMaxWidth(Double.MAX_VALUE);
+        forgotPassword.setMaxWidth(Double.MAX_VALUE);
         submit.setAlignment(Pos.CENTER_LEFT);
         signup.setAlignment(Pos.CENTER_LEFT);
+        forgotPassword.setAlignment(Pos.CENTER_RIGHT);
+        forgotPassword.getStyleClass().add("text-link");
         form.getChildren().addAll(
                 label("Iniciar sesión", "section-title"),
                 f,
+                forgotPassword,
                 submit,
                 signup);
         if (service.db.demo)
@@ -561,10 +566,25 @@ public final class AplicacionInmobiliaria extends Application {
         root.setCenter(center);
     }
 
+    private void forgotPassword() {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION, "", ButtonType.OK);
+        alert.initOwner(stage);
+        alert.setTitle("Recuperar contraseña");
+        alert.setHeaderText("¿Olvidaste tu contraseña?");
+        alert.setContentText(
+                "La recuperación automática por correo todavía no está configurada. Si sos "
+                        + "cliente o agente, contactá al administrador: en Usuarios puede "
+                        + "asignarte una contraseña temporal después de verificar tu identidad. "
+                        + "Si olvidaste la contraseña de Admin, contactá al responsable técnico.");
+        styleDialog(alert);
+        alert.showAndWait();
+    }
+
     private void register() {
         page(
-                "Crear cuenta",
-                "Completá tus datos para buscar, consultar y solicitar publicaciones.");
+                "Creá tu cuenta",
+                "Completá estos pasos para comenzar a buscar tu próximo hogar.");
+        content.getStyleClass().add("registration-page");
         Formulario personal = FormularioAcceso.datosPersonales();
         Formulario contact = FormularioAcceso.datosDeContacto();
         PasswordField pass = (PasswordField) contact.control("password");
@@ -574,23 +594,61 @@ public final class AplicacionInmobiliaria extends Application {
         address.text("localidad", "Localidad", "");
         Formulario[] steps = {personal, contact, address};
         String[] names = {
-            "1  Datos personales", "2  Datos de contacto", "3  Dirección", "4  Finalizar"
+            "Datos personales", "Contacto y seguridad", "Tu dirección"
+        };
+        String[] summaries = {
+            "Cómo te identificamos", "Correo y contraseña de acceso", "Dónde podemos encontrarte"
+        };
+        String[] descriptions = {
+            "Ingresá tus datos tal como aparecen en tu documento.",
+            "Usá un correo vigente y una contraseña segura de al menos 10 caracteres.",
+            "Completá tu ubicación para recibir una atención más cercana."
         };
         int[] index = {0};
-        VBox area = card();
-        VBox nav = new VBox(16);
-        nav.setMinWidth(210);
-        for (String name : names) nav.getChildren().add(label(name, "section-title"));
+        VBox area = new VBox(18);
+        area.getStyleClass().add("registration-card");
+        area.setMaxWidth(820);
+        HBox[] stepRows = new HBox[names.length];
+        Label[] markers = new Label[names.length];
+        VBox progress = new VBox(0);
+        progress.getStyleClass().add("registration-progress");
+        progress.setMinWidth(245);
+        progress.setPrefWidth(245);
+        progress.getChildren().addAll(
+                label("TU REGISTRO", "registration-eyebrow"),
+                label("Tres pasos sencillos", "registration-progress-title"),
+                label("Tu cuenta será de cliente y podrás explorar propiedades.", "registration-progress-copy"));
+        for (int i = 0; i < names.length; i++) {
+            markers[i] = label(Integer.toString(i + 1), "registration-step-marker");
+            VBox text = new VBox(3,
+                    label(names[i], "registration-step-title"),
+                    label(summaries[i], "registration-step-copy"));
+            stepRows[i] = new HBox(12, markers[i], text);
+            stepRows[i].setAlignment(Pos.CENTER_LEFT);
+            stepRows[i].getStyleClass().add("registration-step");
+            VBox.setMargin(stepRows[i], new Insets(18, 0, 0, 0));
+            progress.getChildren().add(stepRows[i]);
+        }
+        progress.getChildren().addAll(
+                new Region(),
+                label("Tus datos se usan para gestionar tu cuenta y tus consultas.", "registration-privacy"));
         Runnable[] show = {null};
         show[0] =
                 () -> {
-                    area.getChildren()
-                            .setAll(
-                                    label(
-                                            "Crear cuenta · Paso " + (index[0] + 1) + " de 4",
-                                            "section-title"),
-                                    steps[index[0]]);
-                    HBox controls = row();
+                    for (int i = 0; i < stepRows.length; i++) {
+                        stepRows[i].getStyleClass().removeAll("active", "complete", "upcoming");
+                        stepRows[i].getStyleClass().add(
+                                i == index[0] ? "active" : i < index[0] ? "complete" : "upcoming");
+                        markers[i].setText(i < index[0] ? "✓" : Integer.toString(i + 1));
+                    }
+                    Label stepCount = label("PASO " + (index[0] + 1) + " DE " + steps.length,
+                            "registration-eyebrow");
+                    Label stepTitle = label(names[index[0]], "registration-form-title");
+                    Label stepDescription = label(descriptions[index[0]], "registration-form-copy");
+                    stepDescription.setWrapText(true);
+                    VBox heading = new VBox(6, stepCount, stepTitle, stepDescription);
+                    HBox controls = new HBox(12);
+                    controls.setAlignment(Pos.CENTER_LEFT);
                     if (index[0] > 0)
                         controls.getChildren()
                                 .add(
@@ -600,10 +658,13 @@ public final class AplicacionInmobiliaria extends Application {
                                                     index[0]--;
                                                     show[0].run();
                                                 }));
+                    Region controlGap = new Region();
+                    HBox.setHgrow(controlGap, Priority.ALWAYS);
+                    controls.getChildren().add(controlGap);
                     controls.getChildren()
                             .add(
                                     button(
-                                            index[0] == 2 ? "Crear cuenta" : "Siguiente",
+                                            index[0] == steps.length - 1 ? "Crear cuenta" : "Continuar",
                                             () -> {
                                                 if (index[0] == 0) {
                                                     for (String k :
@@ -642,11 +703,15 @@ public final class AplicacionInmobiliaria extends Application {
                                                                     + " en venta y alquiler.");
                                                 }
                                             }));
-                    area.getChildren().add(controls);
+                    area.getChildren().setAll(heading, steps[index[0]], controls);
                 };
         show[0].run();
+        HBox layout = new HBox(22, progress, area);
+        layout.setAlignment(Pos.TOP_CENTER);
         HBox.setHgrow(area, Priority.ALWAYS);
-        content.getChildren().add(row(nav, area));
+        content.getChildren().addAll(
+                layout,
+                secondary("¿Ya tenés una cuenta? Iniciar sesión", this::login));
     }
 
     private void catalog() {
@@ -2576,6 +2641,9 @@ public final class AplicacionInmobiliaria extends Application {
                                                     users();
                                                 }),
                                         secondary(
+                                                "Restablecer contraseña",
+                                                () -> resetUserPassword(selected(t))),
+                                        secondary(
                                                 "Desactivar",
                                                 () -> {
                                                     Registro u = selected(t);
@@ -2599,6 +2667,28 @@ public final class AplicacionInmobiliaria extends Application {
                                                         users();
                                                     }
                                                 }))));
+    }
+
+    private void resetUserPassword(Registro user) {
+        Formulario form = new Formulario(1);
+        PasswordField password = form.password("password", "Contraseña temporal (10 caracteres o más)");
+        PasswordField confirmation = form.password("confirmation", "Repetir contraseña temporal");
+        dialog(
+                "Restablecer acceso · " + user.text("etiqueta"),
+                card(
+                        form,
+                        label(
+                                "Compartí esta contraseña con el usuario por un canal privado. "
+                                        + "Después podrá cambiarla desde Mi perfil.",
+                                "subtitle")),
+                "Restablecer contraseña",
+                () -> {
+                    if (!password.getText().equals(confirmation.getText()))
+                        throw new IllegalArgumentException("Las contraseñas no coinciden.");
+                    service.resetUserPassword(user.id("id"), password.getText());
+                    users();
+                    info("La contraseña temporal quedó guardada.");
+                });
     }
 
     private void agents() {

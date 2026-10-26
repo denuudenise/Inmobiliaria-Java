@@ -258,6 +258,23 @@ public final class ServicioInmobiliaria {
                 });
     }
 
+    public void resetUserPassword(int userId, String replacement) {
+        int actor = require(1);
+        if (userId == actor)
+            throw new IllegalArgumentException(
+                    "Para cambiar tu propia contraseña, usá Mi perfil.");
+        String hash = ClavesSeguras.hash(replacement);
+        db.transaction(
+                c -> {
+                    if (list(c, "SELECT id_usuario FROM usuarios WHERE id_usuario=?", userId).isEmpty())
+                        throw new IllegalArgumentException("No existe ese usuario.");
+                    exec(c, "UPDATE usuarios SET password_hash=? WHERE id_usuario=?", hash, userId);
+                    audit(c, actor, "Restablecimiento de contraseña", "usuarios", userId,
+                            "Contraseña temporal asignada por administración");
+                    return null;
+                });
+    }
+
     public List<Registro> lookup(String table) {
         String pk =
                 switch (table) {
