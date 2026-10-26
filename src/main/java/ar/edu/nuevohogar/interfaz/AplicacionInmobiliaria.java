@@ -526,11 +526,14 @@ public final class AplicacionInmobiliaria extends Application {
 
     private void login() {
         activePage = "Iniciar sesión";
+        root.setTop(loginHeader());
+        root.setLeft(null);
         Formulario f = FormularioAcceso.inicioSesion();
         VBox form = new VBox(14);
         form.getStyleClass().add("login-card");
-        form.setMaxWidth(410);
-        form.setPrefWidth(410);
+        form.setMaxWidth(360);
+        form.setPrefWidth(360);
+        form.setMaxHeight(Region.USE_PREF_SIZE);
         Button submit = button(
                 "Iniciar sesión",
                 () -> {
@@ -541,6 +544,9 @@ public final class AplicacionInmobiliaria extends Application {
                 });
         Button signup = secondary("Crear una cuenta", this::register);
         Button forgotPassword = secondary("¿Olvidaste tu contraseña?", this::forgotPassword);
+        form.setSpacing(9);
+        f.setHgap(0);
+        f.setVgap(8);
         submit.setMaxWidth(Double.MAX_VALUE);
         signup.setMaxWidth(Double.MAX_VALUE);
         forgotPassword.setMaxWidth(Double.MAX_VALUE);
@@ -561,9 +567,65 @@ public final class AplicacionInmobiliaria extends Application {
                                     + "cliente@nuevohogar.demo\nContraseña: "
                                     + DatosDemostracion.PASSWORD,
                             "subtitle"));
-        StackPane center = new StackPane(form);
+        StackPane center = new StackPane();
+        center.setAlignment(Pos.CENTER);
         center.getStyleClass().add("login-background");
+        Rectangle clip = new Rectangle();
+        clip.widthProperty().bind(center.widthProperty());
+        clip.heightProperty().bind(center.heightProperty());
+        center.setClip(clip);
+        var backgroundResource = getClass().getResource("/images/casita.jpg");
+        if (backgroundResource != null) {
+            ImageView background = new ImageView(new Image(backgroundResource.toExternalForm()));
+            // El fondo no debe influir en el tamaño del StackPane ni desplazar el formulario.
+            background.setManaged(false);
+            background.setMouseTransparent(true);
+            background.setPreserveRatio(true);
+            background.setSmooth(true);
+            Runnable ajustarFondo = () -> {
+                double ancho = center.getWidth();
+                double alto = center.getHeight();
+                if (ancho <= 0 || alto <= 0 || background.getImage().getWidth() <= 0) return;
+                double escala = Math.max(
+                        ancho / background.getImage().getWidth(),
+                        alto / background.getImage().getHeight());
+                double anchoImagen = background.getImage().getWidth() * escala;
+                double altoImagen = background.getImage().getHeight() * escala;
+                background.setFitWidth(anchoImagen);
+                background.setFitHeight(altoImagen);
+                background.relocate((ancho - anchoImagen) / 2, (alto - altoImagen) / 2);
+            };
+            center.widthProperty().addListener((obs, anterior, actual) -> ajustarFondo.run());
+            center.heightProperty().addListener((obs, anterior, actual) -> ajustarFondo.run());
+            Rectangle tint = new Rectangle();
+            tint.widthProperty().bind(center.widthProperty());
+            tint.heightProperty().bind(center.heightProperty());
+            tint.setFill(Color.rgb(20, 38, 48, 0.22));
+            tint.setManaged(false);
+            tint.setMouseTransparent(true);
+            center.getChildren().addAll(background, tint);
+            ajustarFondo.run();
+        }
+        center.getChildren().add(form);
         root.setCenter(center);
+    }
+
+    private HBox loginHeader() {
+        HBox header = new HBox(15);
+        header.setAlignment(Pos.CENTER_LEFT);
+        header.getStyleClass().add("login-topbar");
+
+        Label logo = label("⌂", "login-brand-mark");
+        VBox name = new VBox(
+                1,
+                label("INMOBILIARIA", "login-brand-kicker"),
+                label("Nuevo Hogar", "login-brand-name"),
+                label("Tu próximo hogar, está aquí", "login-brand-tagline"));
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        Label services = label("COMPRA  ·  VENTA  ·  ALQUILER", "login-header-note");
+        header.getChildren().addAll(logo, name, spacer, services);
+        return header;
     }
 
     private void forgotPassword() {
