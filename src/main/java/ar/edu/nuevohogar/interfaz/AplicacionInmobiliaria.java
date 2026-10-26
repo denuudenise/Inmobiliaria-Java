@@ -1561,8 +1561,8 @@ public final class AplicacionInmobiliaria extends Application {
         boolean edit = original != null;
         page(
                 edit ? "Editar propiedad #" + p.id("id_propiedad") : "Nueva propiedad",
-                "Guardá la ficha en borrador para adjuntar archivos, o enviala a revisión. Las"
-                        + " modificaciones requieren una nueva aprobación.");
+                "Completá los datos y agregá fotos o videos antes de enviar. Las modificaciones"
+                        + " de una propiedad publicada requieren una nueva aprobación.");
         Formulario f = new Formulario();
         f.text("titulo", "Título *", p.text("titulo"));
         f.rows(
@@ -1605,6 +1605,40 @@ public final class AplicacionInmobiliaria extends Application {
         Set<Integer> chosen = new HashSet<>();
         if (edit) service.features(p.id("id_propiedad")).forEach(r -> chosen.add(r.id("id")));
         Map<Integer, CheckBox> features = featureChecks(chosen);
+        Integer[] savedPropertyId = {edit ? p.id("id_propiedad") : null};
+        List<Path> pendingMedia = new ArrayList<>();
+        int[] savedMediaCount = {edit ? service.attachments(p.id("id_propiedad"), false).size() : 0};
+        Label existingMedia = label("Archivos multimedia vinculados: " + savedMediaCount[0], "subtitle");
+        Label selectedMedia = label("Todavía no seleccionaste fotos ni videos.", "subtitle");
+        selectedMedia.setWrapText(true);
+        Runnable refreshMedia = () -> {
+            existingMedia.setText("Archivos multimedia vinculados: " + savedMediaCount[0]);
+            selectedMedia.setText(pendingMedia.isEmpty()
+                    ? "Todavía no seleccionaste fotos ni videos."
+                    : "Pendientes de cargar: " + pendingMedia.stream()
+                            .map(path -> path.getFileName().toString())
+                            .collect(java.util.stream.Collectors.joining(", ")));
+        };
+        VBox mediaBox = card(
+                label("Fotos y videos de la propiedad", "section-title"),
+                label("Podés seleccionar varias imágenes JPG, JPEG o PNG y videos MP4 o WEBM. "
+                        + "Cada archivo puede pesar hasta 50 MB. Se cargarán antes de enviar la "
+                        + "solicitud para que el equipo pueda revisarlos.", "subtitle"),
+                existingMedia,
+                selectedMedia,
+                secondary("Seleccionar fotos o videos", () -> {
+                    FileChooser chooser = new FileChooser();
+                    chooser.setTitle("Seleccionar fotos o videos de la propiedad");
+                    chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(
+                            "Imágenes y videos", "*.jpg", "*.jpeg", "*.png", "*.mp4", "*.webm"));
+                    List<java.io.File> files = chooser.showOpenMultipleDialog(stage);
+                    if (files == null) return;
+                    for (java.io.File file : files) {
+                        Path path = file.toPath();
+                        if (!pendingMedia.contains(path)) pendingMedia.add(path);
+                    }
+                    refreshMedia.run();
+                }));
         VBox offersBox =
                 card(
                         label("Operaciones y precios", "section-title"),
@@ -1649,18 +1683,31 @@ public final class AplicacionInmobiliaria extends Application {
                                                     money(prices.get(id).getText()),
                                                     currencies.get(id).getValue()));
                             });
-                    int id =
-                            service.saveProperty(
-                                    edit ? p.id("id_propiedad") : null,
-                                    f.values(),
-                                    offers,
-                                    checked(features),
-                                    submit);
+                    int id = service.saveProperty(
+                            savedPropertyId[0], f.values(), offers, checked(features), false);
+                    savedPropertyId[0] = id;
+                    while (!pendingMedia.isEmpty()) {
+                        Path path = pendingMedia.get(0);
+                        String filename = path.getFileName().toString().toLowerCase(Locale.ROOT);
+                        String mediaType = filename.endsWith(".mp4") || filename.endsWith(".webm")
+                                ? "Video" : "Imagen";
+                        try {
+                            service.attach(id, path, mediaType);
+                        } catch (Exception e) {
+                            throw new IllegalArgumentException(
+                                    "No se pudo cargar " + path.getFileName() + ": " + e.getMessage(), e);
+                        }
+                        pendingMedia.remove(0);
+                        savedMediaCount[0]++;
+                        refreshMedia.run();
+                    }
+                    if (submit) service.submit(id);
                     propertyDetails(id);
                 };
         content.getChildren()
                 .addAll(
                         card(f),
+                        mediaBox,
                         offersBox,
                         card(
                                 label("Características adicionales", "section-title"),
