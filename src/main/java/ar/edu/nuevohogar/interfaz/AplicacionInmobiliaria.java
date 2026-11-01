@@ -1343,7 +1343,7 @@ public final class AplicacionInmobiliaria extends Application {
         content.getChildren().add(lower);
 
         if (service.canViewPrivateProperty(id)) {
-            VBox docs = card(label("Planos, escrituras y comprobantes", "section-title"),
+            VBox docs = card(label("Documentos privados de la propiedad", "section-title"),
                     label("Documentación privada para el propietario y el equipo responsable. Disponible durante la revisión de publicación.", "subtitle"));
             docs.setId("property-documents");
             addFileButtons(docs, id, true);
@@ -1432,41 +1432,83 @@ public final class AplicacionInmobiliaria extends Application {
         info("Propiedad agregada a tus intereses.");
     }
 
+    private String documentName(String type) {
+        return switch (type) {
+            case "Impuesto" -> "Comprobante de impuesto";
+            case "Servicio" -> "Comprobante de servicio";
+            default -> type;
+        };
+    }
+
+    private String documentHelp(String type) {
+        return switch (type) {
+            case "Plano" -> "Subí el plano de la propiedad: el dibujo que muestra sus ambientes y medidas.";
+            case "Escritura" -> "Subí una copia o foto legible de la escritura de la propiedad.";
+            case "Impuesto" -> "Subí una boleta o comprobante de impuesto inmobiliario o municipal. El cálculo de importes se hace en el apartado de abajo.";
+            case "Servicio" -> "Subí una boleta o comprobante de luz, agua o gas de esta propiedad.";
+            default -> "Seleccioná una foto o un video para la galería de la propiedad.";
+        };
+    }
+
+    private ComboBox<String> documentChoice(Formulario form, boolean documentsOnly) {
+        ComboBox<String> choice = form.choice("tipo", "1. ¿Qué vas a subir?", documentsOnly ? "Plano" : "Imagen",
+                documentsOnly ? new String[]{"Plano", "Escritura", "Impuesto", "Servicio"}
+                        : new String[]{"Imagen", "Video", "Plano", "Escritura", "Impuesto", "Servicio"});
+        choice.setConverter(new javafx.util.StringConverter<String>() {
+            public String toString(String value) { return value == null ? "" : documentName(value); }
+            public String fromString(String value) { return value; }
+        });
+        return choice;
+    }
+
     private VBox pendingDocumentsPanel(Map<Path, String> pending) {
+        Formulario form = new Formulario(1);
+        ComboBox<String> choice = documentChoice(form, true);
+        Label help = label(documentHelp(choice.getValue()), "subtitle");
+        choice.valueProperty().addListener((o, old, value) -> help.setText(documentHelp(value)));
         VBox list = new VBox(8);
-        VBox box = card(label("Planos, escrituras y comprobantes", "section-title"),
-                label("PDF, JPG o PNG, hasta 50 MB por archivo. Son privados y se guardan antes de enviar la publicación.", "subtitle"), list);
+        Label status = label("Todavía no seleccionaste documentos.", "subtitle");
+        Runnable updateStatus = () -> status.setText(pending.isEmpty() ? "Todavía no seleccionaste documentos."
+                : "Documentos seleccionados: " + pending.size() + ". Se guardarán al guardar el borrador o enviar a revisión.");
         Runnable refresh = () -> {
             list.getChildren().clear();
             pending.forEach((path, type) -> {
-                Label name = label(type + " · " + path.getFileName(), "subtitle");
+                Label name = label(documentName(type) + " · " + path.getFileName(), "subtitle");
                 name.setWrapText(true);
-                list.getChildren().add(new FlowPane(10, 6, name, secondary("Quitar", () -> {
+                name.setMaxWidth(520);
+                FlowPane line = new FlowPane(10, 6);
+                line.getChildren().addAll(name, secondary("Quitar de la selección", () -> {
                     pending.remove(path);
-                    list.getChildren().removeIf(node -> node instanceof FlowPane pane && pane.getChildren().contains(name));
-                })));
+                    list.getChildren().remove(line);
+                    updateStatus.run();
+                }));
+                list.getChildren().add(line);
             });
+            updateStatus.run();
         };
-        FlowPane buttons = new FlowPane(10, 10);
-        for (String type : List.of("Plano", "Escritura", "Impuesto", "Servicio"))
-            buttons.getChildren().add(secondary("Agregar " + type.toLowerCase(Locale.ROOT), () -> {
-                FileChooser chooser = new FileChooser();
-                chooser.setTitle("Seleccionar " + type.toLowerCase(Locale.ROOT));
-                chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("PDF o imágenes", "*.pdf", "*.jpg", "*.jpeg", "*.png"));
-                var files = chooser.showOpenMultipleDialog(stage);
-                if (files != null) for (var file : files) pending.put(file.toPath(), type);
-                refresh.run();
-            }));
-        box.getChildren().add(buttons);
+        VBox box = card(label("Documentos privados de la propiedad", "section-title"),
+                label("Solo pueden verlos el propietario, administración y el agente responsable. No aparecen en el catálogo público.", "subtitle"),
+                form, help,
+                secondary("2. Elegir archivos", () -> {
+                    FileChooser chooser = new FileChooser();
+                    chooser.setTitle("Elegir: " + documentName(choice.getValue()));
+                    chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("PDF o fotos (JPG, PNG)", "*.pdf", "*.jpg", "*.jpeg", "*.png"));
+                    var files = chooser.showOpenMultipleDialog(stage);
+                    if (files != null) for (var file : files) pending.put(file.toPath(), choice.getValue());
+                    refresh.run();
+                }),
+                label("Podés elegir varios archivos. PDF o fotos JPG/PNG, hasta 50 MB cada uno. Revisá que el texto se lea bien.", "subtitle"),
+                status, list);
+        refresh.run();
         return box;
     }
 
     private Formulario taxForm() {
         Formulario form = new Formulario(2);
-        form.text("nombre", "Nombre del impuesto *", "");
-        form.text("periodo", "Período o concepto *", "");
-        form.text("base", "Base imponible (sin separador de miles) *", "");
-        form.text("porcentaje", "Porcentaje *", "");
+        form.text("nombre", "¿Qué impuesto es? *", "").setPromptText("Ej.: impuesto inmobiliario");
+        form.text("periodo", "¿A qué período corresponde? *", "").setPromptText("Ej.: noviembre 2026 o cuota 3");
+        form.text("base", "Valor sobre el que se calcula *", "").setPromptText("Ej.: 100000 (sin puntos de miles)");
+        form.text("porcentaje", "Porcentaje a aplicar (%) *", "").setPromptText("Ej.: 2 para calcular el 2 %");
         form.choice("moneda", "Moneda", "ARS", "ARS", "USD");
         return form;
     }
@@ -1485,15 +1527,17 @@ public final class AplicacionInmobiliaria extends Application {
     private VBox pendingTaxesPanel(List<ServicioInmobiliaria.PropertyTax> pending) {
         Formulario form = taxForm();
         VBox results = new VBox(10);
-        return card(label("Cálculo de impuestos", "section-title"),
-                label("Estimación manual: base × porcentaje ÷ 100. Agregá cada cálculo para guardarlo junto con la propiedad. No determina tasas oficiales.", "subtitle"),
-                form, secondary("Calcular y agregar", () -> {
+        return card(label("Calcular un impuesto", "section-title"),
+                label("Este apartado calcula un importe; no sube boletas. Ejemplo: un valor de 100000 al 2 % da 2000. Ingresá el porcentaje que corresponda: el sistema no elige tasas oficiales.", "subtitle"),
+                form, label("Completá los campos con * y pulsá Calcular y agregar. El resultado se guardará al guardar el borrador o enviar a revisión.", "subtitle"), secondary("Calcular y agregar", () -> {
                     var tax = readTax(form);
                     pending.add(tax);
                     Label value = label(tax.name() + " · " + tax.period() + " · " + tax.currency() + " " + formatNumber(tax.amount()), "section-title");
                     FlowPane line = new FlowPane(10, 8);
                     line.getChildren().addAll(value, secondary("Quitar", () -> { pending.remove(tax); results.getChildren().remove(line); }));
                     results.getChildren().add(line);
+                    for (String key : List.of("nombre", "periodo", "base", "porcentaje"))
+                        ((TextField) form.control(key)).clear();
                 }), results);
     }
 
@@ -1554,18 +1598,19 @@ public final class AplicacionInmobiliaria extends Application {
 
     private void upload(int id, boolean documentsOnly) {
         Formulario f = new Formulario();
-        f.choice("tipo", "Tipo de archivo", documentsOnly ? "Plano" : "Imagen",
-                documentsOnly ? new String[]{"Plano", "Escritura", "Servicio", "Impuesto"}
-                        : new String[]{"Imagen", "Video", "Plano", "Escritura", "Servicio", "Impuesto"});
-        Label filename = label("Ningún archivo seleccionado · Máximo 50 MB", "subtitle");
+        ComboBox<String> choice = documentChoice(f, documentsOnly);
+        Label help = label(documentHelp(choice.getValue()), "subtitle");
+        choice.valueProperty().addListener((o, old, value) -> help.setText(documentHelp(value)));
+        Label filename = label("Todavía no elegiste un archivo.", "subtitle");
         Path[] path = {null};
         VBox box =
                 card(
-                        label("Los archivos se cargan en borrador o rechazo. El equipo también puede agregar documentación privada durante la revisión.", "subtitle"),
-                        f,
+                        label(documentsOnly ? "Documentos privados: solo los ven el propietario, administración y el agente responsable. PDF o fotos JPG/PNG, hasta 50 MB."
+                                : "Las fotos y videos van a la galería. Los planos, escrituras y comprobantes son privados. Máximo 50 MB por archivo.", "subtitle"),
+                        f, help,
                         filename,
                         secondary(
-                                "Seleccionar archivo",
+                                "2. Elegir archivo",
                                 () -> {
                                     FileChooser fc = new FileChooser();
                                     fc.setTitle(documentsOnly ? "Subir planos, escrituras o comprobantes" : "Adjuntar documentación o multimedia");
@@ -1573,13 +1618,13 @@ public final class AplicacionInmobiliaria extends Application {
                                     java.io.File file = fc.showOpenDialog(stage);
                                     if (file != null) {
                                         path[0] = file.toPath();
-                                        filename.setText(file.getName());
+                                        filename.setText("Listo para subir: " + file.getName() + ". Confirmá con el botón de abajo.");
                                     }
                                 }));
         dialog(
-                "Adjuntar archivo",
+                documentsOnly ? "Subir un documento privado" : "Adjuntar archivo",
                 box,
-                "Guardar archivo",
+                documentsOnly ? "Subir documento" : "Subir archivo",
                 () -> {
                     if (path[0] == null)
                         throw new IllegalArgumentException("Seleccioná un archivo.");
@@ -2016,6 +2061,7 @@ public final class AplicacionInmobiliaria extends Application {
         VBox documentsBox = pendingDocumentsPanel(pendingDocuments);
         VBox taxesBox = pendingTaxesPanel(pendingTaxes);
         if (edit) {
+            documentsBox.getChildren().add(label("Documentos ya guardados · tocá un archivo para abrirlo", "section-title"));
             addFileButtons(documentsBox, p.id("id_propiedad"), true);
             for (Registro tax : service.propertyTaxes(p.id("id_propiedad"))) taxesBox.getChildren().add(taxSummary(tax));
         }
