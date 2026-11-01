@@ -8,6 +8,7 @@ public final class PanelAgente {
     private PanelAgente() {}
     public static List<ElementoMenuPanel> menu(Runnable... a) {
         return List.of(ElementoMenuPanel.opcion("Inicio", a[0], true),
+                ElementoMenuPanel.opcion("Catálogo", a[12], false),
                 ElementoMenuPanel.opcion("Propiedades", a[1], false),
                 ElementoMenuPanel.opcion("Solicitudes de carga", a[2], false),
                 ElementoMenuPanel.opcion("Visitas", a[3], false),

@@ -185,7 +185,7 @@ public final class AplicacionInmobiliaria extends Application {
                     this::dashboard, this::clients, this::propertyList, this::requests,
                     this::visits, this::offersAndReservations, this::followups, this::operations,
                     this::agents, this::users, this::reports, this::notifications, this::agreements,
-                    this::buildings, this::settings);
+                    this::buildings, this::settings, this::catalog);
             for (ElementoMenuPanel item : adminMenu) {
                 if (item.seccion()) nav.getChildren().add(label(item.nombre(), "admin-side-caption"));
                 else {
@@ -232,7 +232,7 @@ public final class AplicacionInmobiliaria extends Application {
         List<ElementoMenuPanel> roleMenu = service.role() == 2
                 ? PanelAgente.menu(this::dashboard, this::propertyList, this::requests, this::visits,
                         this::offersAndReservations, this::followups, this::clients, this::agreements,
-                        this::buildings, this::operations, this::reports, this::notifications)
+                        this::buildings, this::operations, this::reports, this::notifications, this::catalog)
                 : PanelCliente.menu(this::dashboard, this::catalog, this::requests, this::visits,
                         this::offersAndReservations,
                         () -> interests(service.current().id("id_usuario")),

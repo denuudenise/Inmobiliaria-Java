@@ -9,6 +9,7 @@ public final class  PanelAdministrador {
     public static List<ElementoMenuPanel> menu(Runnable... a) {
         return List.of(
                 ElementoMenuPanel.opcion("⌂|Inicio", a[0], true),
+                ElementoMenuPanel.opcion("▦|Catálogo", a[15], false),
                 ElementoMenuPanel.seccion("GESTIÓN"),
                 ElementoMenuPanel.opcion("♙|Clientes", a[1], false),
                 ElementoMenuPanel.opcion("⌂|Propiedades", a[2], false),
