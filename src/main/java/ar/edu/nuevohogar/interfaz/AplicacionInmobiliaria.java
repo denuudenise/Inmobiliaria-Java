@@ -640,13 +640,16 @@ public final class AplicacionInmobiliaria extends Application {
     private void forgotPassword() {
         Alert alert = new Alert(Alert.AlertType.INFORMATION, "", ButtonType.OK);
         alert.initOwner(stage);
-        alert.setTitle("Recuperar contraseña");
-        alert.setHeaderText("¿Olvidaste tu contraseña?");
+        alert.setTitle("Ayuda para recuperar el acceso");
+        alert.setHeaderText("Recuperá tu cuenta fácilmente");
         alert.setContentText(
-                "La recuperación automática por correo todavía no está configurada. Si sos "
-                        + "cliente o agente, contactá al administrador: en Usuarios puede "
-                        + "asignarte una contraseña temporal después de verificar tu identidad. "
-                        + "Si olvidaste la contraseña de Admin, contactá al responsable técnico.");
+                "Por ahora, la aplicación no envía correos de recuperación. Para volver a entrar:\n\n"
+                        + "1. Contactá al administrador de la inmobiliaria y decile el correo de tu cuenta.\n"
+                        + "2. El administrador abrirá Usuarios, buscará tu cuenta y elegirá "
+                        + "\"Restablecer contraseña\".\n"
+                        + "3. Te dará una contraseña temporal para iniciar sesión.\n"
+                        + "4. Cuando recuperes el acceso, cambiá esa contraseña desde tu perfil.\n\n"
+                        + "Si la cuenta es la de Admin, contactá al responsable técnico del sistema.");
         styleDialog(alert);
         alert.showAndWait();
     }
@@ -2169,9 +2172,20 @@ public final class AplicacionInmobiliaria extends Application {
                         service.savePropertyTax(id, pendingTaxes.getFirst());
                         pendingTaxes.removeFirst();
                     }
-                    if (submit) service.submit(id);
+                    if (submit) {
+                        if (service.role() == 1) service.publishDirectly(id);
+                        else service.submit(id);
+                    }
                     propertyDetails(id);
                 };
+        List<Node> propertyActions = new ArrayList<>();
+        if (service.role() == 1) {
+            propertyActions.add(button("Guardar y publicar", () -> save.accept(true)));
+        } else {
+            propertyActions.add(secondary("Guardar borrador", () -> save.accept(false)));
+            propertyActions.add(button("Guardar y enviar a revisión", () -> save.accept(true)));
+        }
+        propertyActions.add(secondary("Cancelar", this::propertyList));
         content.getChildren()
                 .addAll(
                         card(f),
@@ -2182,10 +2196,7 @@ public final class AplicacionInmobiliaria extends Application {
                         card(
                                 label("Características adicionales", "section-title"),
                                 flow(features.values().toArray(Node[]::new))),
-                        flow(
-                                secondary("Guardar borrador", () -> save.accept(false)),
-                                button("Guardar y enviar a revisión", () -> save.accept(true)),
-                                secondary("Cancelar", this::propertyList)));
+                        flow(propertyActions.toArray(Node[]::new)));
     }
 
     private void stateForm(Registro p) {

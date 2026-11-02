@@ -617,6 +617,42 @@ public final class ServicioInmobiliaria {
                 });
     }
 
+    public void publishDirectly(int id) {
+        int actor = require(1);
+        db.transaction(
+                c -> {
+                    Registro property = editable(c, id, actor);
+                    if (!Set.of(1, 2, 4).contains(property.id("id_estado_verificacion")))
+                        throw new IllegalArgumentException(
+                                "La propiedad no está disponible para publicación directa.");
+                    exec(
+                            c,
+                            "UPDATE propiedades SET id_estado_verificacion=3,id_admin_verificador=?,"
+                                    + "fecha_verificacion=CURRENT_TIMESTAMP,motivo_rechazo=NULL "
+                                    + "WHERE id_propiedad=?",
+                            actor,
+                            id);
+                    exec(
+                            c,
+                            "UPDATE publicaciones SET estado='Publicada',observaciones=?,id_revisor=?,"
+                                    + "fecha_revision=CURRENT_TIMESTAMP WHERE id_propiedad=? AND estado='Pendiente'",
+                            "Publicada directamente por administración.",
+                            actor,
+                            id);
+                    audit(
+                            c,
+                            actor,
+                            "Publicación directa por administración",
+                            "propiedades",
+                            id,
+                            property.text("titulo"));
+                    int owner = property.id("id_propietario");
+                    if (owner > 0 && owner != actor)
+                        notify(c, owner, "Tu propiedad fue publicada en el catálogo: " + property.text("titulo"));
+                    return null;
+                });
+    }
+
     public List<Registro> requests() {
         int actor = require(1, 2, 3);
         return solicitudDao.listForRole(role(), actor).stream()
