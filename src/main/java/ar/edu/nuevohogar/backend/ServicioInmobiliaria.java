@@ -27,6 +27,9 @@ public final class ServicioInmobiliaria {
     private final ClienteDAO clienteDao;
     private final SolicitudDAO solicitudDao;
     private final GestionComercialDAO gestionDao;
+    private final MultimediaDAO multimediaDao;
+    private final CloudinaryService cloudinary;
+    private final ClienteDocumentosNube privateDocuments;
     private Integer sessionId;
     private static final String PROPERTY =
             "SELECT p.*,t.nombre AS tipo,e.nombre AS verificacion,c.nombre AS"
@@ -44,6 +47,9 @@ public final class ServicioInmobiliaria {
         clienteDao = new ClienteDAO(db);
         solicitudDao = new SolicitudDAO(db);
         gestionDao = new GestionComercialDAO(db);
+        multimediaDao = new MultimediaDAO(db);
+        cloudinary = new CloudinaryService(db);
+        privateDocuments = new ClienteDocumentosNube(db);
     }
 
     public boolean signedIn() {
@@ -69,6 +75,7 @@ public final class ServicioInmobiliaria {
 
     public void logout() {
         sessionId = null;
+        privateDocuments.cerrarSesion();
     }
 
     public void login(String email, String password) {
@@ -80,6 +87,14 @@ public final class ServicioInmobiliaria {
                                                 "Correo o contraseña incorrectos."));
         if (!ClavesSeguras.verify(password, usuario.passwordHash()))
             throw new IllegalArgumentException("Correo o contraseña incorrectos.");
+        if (privateDocuments.configured()) {
+            try {
+                privateDocuments.iniciarSesion(email, password);
+            } catch (Exception e) {
+                throw new IllegalArgumentException(
+                        "La cuenta es correcta, pero no se pudo conectar con el servicio compartido de documentos.", e);
+            }
+        }
         sessionId = usuario.idUsuario();
     }
 
@@ -1538,10 +1553,7 @@ public final class ServicioInmobiliaria {
                         + " id_propiedad=?",
                     id);
         }
-        return dao.list(
-                "SELECT id_multimedia AS id,tipo,url_archivo AS archivo FROM propiedad_multimedia"
-                    + " WHERE id_propiedad=? ORDER BY orden,id_multimedia",
-                id);
+        return multimediaDao.listar(id);
     }
 
     public void attach(int id, Path source, String type) throws Exception {
@@ -1563,29 +1575,25 @@ public final class ServicioInmobiliaria {
             throw new IllegalArgumentException("Formato no admitido para " + type + ".");
         if (Files.size(source) > 50L * 1024 * 1024)
             throw new IllegalArgumentException("El archivo supera los 50 MB.");
-        Files.createDirectories(db.storage);
-        String file = UUID.randomUUID() + "." + ext;
-        Path destination = db.storage.resolve(file);
-        Files.copy(source, destination);
+        db.transaction(c -> {
+            Registro current = editable(c, id, actor);
+            validateAttachmentState(current, media);
+            return null;
+        });
+        if (!media) {
+            privateDocuments.subirDocumento(id, type, source);
+            return;
+        }
+        String storedFile = media ? cloudinary.subir(source, type.equals("Video"))
+                : copyPrivateFile(source, ext);
+        Path destination = media ? null : db.storage.resolve(storedFile);
         try {
             db.transaction(
                     c -> {
                         Registro current = editable(c, id, actor);
-                        if (!Set.of(1, 4).contains(current.id("id_estado_verificacion"))
-                                && !(!media && role() != 3 && current.id("id_estado_verificacion") == 2))
-                            throw new IllegalArgumentException(
-                                    "Guardá la propiedad como borrador antes de cambiar sus"
-                                        + " archivos.");
+                        validateAttachmentState(current, media);
                         if (media)
-                            exec(
-                                    c,
-                                    "INSERT INTO"
-                                        + " propiedad_multimedia(id_propiedad,url_archivo,tipo,orden)"
-                                        + " VALUES(?,?,?,?)",
-                                    id,
-                                    file,
-                                    type,
-                                    1);
+                            multimediaDao.insertar(c, id, storedFile, type, 1);
                         else
                             exec(
                                     c,
@@ -1595,15 +1603,52 @@ public final class ServicioInmobiliaria {
                                     id,
                                     type,
                                     name,
-                                    file,
+                                    storedFile,
                                     actor);
                         audit(c, actor, "Archivo adjunto", "propiedades", id, type + ": " + name);
                         return null;
                     });
         } catch (Exception e) {
-            Files.deleteIfExists(destination);
+            if (destination != null) Files.deleteIfExists(destination);
             throw e;
         }
+    }
+
+    private void validateAttachmentState(Registro property, boolean media) {
+        if (!Set.of(1, 4).contains(property.id("id_estado_verificacion"))
+                && !(!media && role() != 3 && property.id("id_estado_verificacion") == 2))
+            throw new IllegalArgumentException(
+                    "Guardá la propiedad como borrador antes de cambiar sus archivos.");
+    }
+
+    public String privateDocumentUrl(int property, int document) throws Exception {
+        if (!privateDocuments.configured())
+            throw new IllegalStateException("Configurá private_media.api_url para abrir documentos compartidos.");
+        if (!canViewPrivateProperty(property))
+            throw new IllegalArgumentException("No tenés permiso para ver documentos de esta propiedad.");
+        return privateDocuments.urlDocumento(property, document);
+    }
+
+    public boolean privateDocumentsConfigured() { return privateDocuments.configured(); }
+
+    public void migratePrivateDocument(int property, int document, Path source) throws Exception {
+        if (!privateDocuments.configured())
+            throw new IllegalStateException("Configurá primero el servicio compartido de documentos.");
+        if (!canViewPrivateProperty(property))
+            throw new IllegalArgumentException("No tenés permiso para migrar documentos de esta propiedad.");
+        if (attachments(property, true).stream().noneMatch(row -> row.id("id") == document))
+            throw new IllegalArgumentException("El documento ya no existe.");
+        String filename = source.getFileName().toString();
+        String type = attachments(property, true).stream().filter(row -> row.id("id") == document)
+                .findFirst().orElseThrow().text("tipo");
+        privateDocuments.subirDocumento(property, type, source, document);
+    }
+
+    private String copyPrivateFile(Path source, String ext) throws Exception {
+        Files.createDirectories(db.storage);
+        String filename = UUID.randomUUID() + "." + ext;
+        Files.copy(source, db.storage.resolve(filename));
+        return filename;
     }
 
     public Path attachmentPath(int property, int attachment, boolean privateDoc) {
@@ -1612,6 +1657,9 @@ public final class ServicioInmobiliaria {
                         .filter(x -> x.id("id") == attachment)
                         .findFirst()
                         .orElseThrow();
+        if (!privateDoc && (r.text("archivo").startsWith("https://")
+                || r.text("archivo").startsWith("http://")))
+            throw new IllegalArgumentException("El archivo multimedia está alojado en la nube.");
         return ar.edu.nuevohogar.persistencia.dao.RutasAdjuntos.resolve(
                 db.storage, db.webMediaRoot, db.webMediaPrefix, r.text("archivo"), privateDoc);
     }

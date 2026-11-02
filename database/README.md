@@ -61,16 +61,23 @@ La contraseña para todas las cuentas es `DemoHogar2026!`. Son credenciales de d
 
 Creá un usuario de aplicación mediante la herramienta con la que administrás tu servidor y concedé únicamente SELECT, INSERT, UPDATE y DELETE sobre `inmobiliaria.*`. El usuario que aplica las migraciones necesita permisos DDL; la aplicación normal no.
 
-Copiá `config.example.properties` a `config.properties` y completá:
+Copiá `config.example.properties` a `config.properties` y completá las credenciales que te dio tu proveedor. Para MySQL usá `jdbc:mysql` con TLS; para MariaDB podés usar `jdbc:mariadb`:
 
 ```properties
-db.url=jdbc:mariadb://localhost:3306/inmobiliaria
-db.user=inmobiliaria_app
+db.url=jdbc:mysql://HOST:3306/BASE?sslMode=REQUIRED
+db.user=USUARIO_DE_LA_BASE
 db.password=tu_clave_local
 storage.path=data/archivos
+cloudinary.cloud_name=evcpusrx
+cloudinary.upload_preset=inmuebles_unsigned
+private_media.api_url=https://TU-SERVIDOR.example.com
 ```
 
 No guardes el archivo con credenciales en Git. Para una ruta de Windows dentro de un `.properties`, usá barras `/` o escapá cada barra inversa: `storage.path=C:/datos/nuevo-hogar/archivos`.
+
+Las fotos y videos de propiedades se suben a Cloudinary usando el preset `inmuebles_unsigned`; la tabla `propiedad_multimedia.url_archivo` guarda la URL `https` devuelta. Los documentos privados nuevos se suben al backend central y se guardan en Cloudinary con acceso autenticado. No incluyas el API Secret en la app ni en `config.properties`.
+
+Para desplegar el backend seguro de documentos y conectarlo desde todas las PCs, seguí [SERVIDOR_DOCUMENTOS.md](SERVIDOR_DOCUMENTOS.md). Requiere una MariaDB central accesible desde el backend y la URL HTTPS del servicio en `private_media.api_url`.
 
 ## Qué cambia y por qué
 

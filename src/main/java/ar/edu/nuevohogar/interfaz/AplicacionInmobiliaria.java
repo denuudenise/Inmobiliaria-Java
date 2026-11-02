@@ -30,6 +30,7 @@ import javafx.stage.*;
 import javafx.util.Duration;
 
 import java.math.BigDecimal;
+import java.net.URI;
 import java.nio.file.*;
 import java.nio.file.Path;
 import java.sql.SQLException;
@@ -40,7 +41,7 @@ import java.util.function.*;
 
 /** Presentación JavaFX: catálogo y paneles por rol sobre los mismos servicios. */
 public final class AplicacionInmobiliaria extends Application {
-    private record ElementoGaleria(Path path, boolean video) {}
+    private record ElementoGaleria(String uri, boolean video) {}
 
     private ServicioInmobiliaria service;
     private Stage stage;
@@ -927,8 +928,8 @@ public final class AplicacionInmobiliaria extends Application {
         frame.setMinWidth(0);
         frame.setMinHeight(172); frame.setPrefHeight(172); frame.setMaxHeight(172);
         frame.getStyleClass().add("catalog-photo");
-        List<Path> paths = propertyImagePaths(property);
-        Image photo = paths.isEmpty() ? null : new Image(paths.getFirst().toUri().toString(), 1200, 800, true, true);
+        List<String> paths = propertyImageUris(property);
+        Image photo = paths.isEmpty() ? null : new Image(paths.getFirst(), 1200, 800, true, true, true);
         if (photo != null && !photo.isError()) {
             ImageView view = new ImageView(photo);
             view.fitWidthProperty().bind(frame.widthProperty()); view.setFitHeight(172);
@@ -975,29 +976,30 @@ public final class AplicacionInmobiliaria extends Application {
         return s;
     }
 
-    private List<Path> propertyImagePaths(Registro property) {
+    private List<String> propertyImageUris(Registro property) {
         return service.attachments(property.id("id_propiedad"), false).stream()
                 .filter(file -> file.text("tipo").equals("Imagen"))
                 .map(file -> {
                     try {
-                        return service.attachmentPath(property.id("id_propiedad"), file.id("id"), false);
+                        String stored = file.text("archivo");
+                        if (stored.startsWith("https://") || stored.startsWith("http://")) return stored;
+                        Path path = service.attachmentPath(property.id("id_propiedad"), file.id("id"), false);
+                        return Files.isRegularFile(path) ? path.toUri().toString() : null;
                     } catch (IllegalArgumentException e) {
                         // Un adjunto antiguo o no disponible no debe impedir abrir el catálogo.
                         return null;
                     }
                 })
                 .filter(Objects::nonNull)
-                .filter(Files::isRegularFile)
                 .toList();
     }
 
-    private Node photoFrame(Path path, double width, double height) {
-        Image image = new Image(path.toUri().toString());
-        if (image.isError()) return house(width, height, path.hashCode());
+    private Node photoFrame(String uri, double width, double height) {
+        Image image = new Image(uri, width, height, true, true, true);
+        if (image.isError()) return house(width, height, uri.hashCode());
         ImageView view = new ImageView(image);
-        double scale = Math.max(width / image.getWidth(), height / image.getHeight());
-        view.setFitWidth(image.getWidth() * scale);
-        view.setFitHeight(image.getHeight() * scale);
+        view.setFitWidth(width);
+        view.setFitHeight(height);
         view.setPreserveRatio(true);
         view.setSmooth(true);
         StackPane frame = new StackPane(view);
@@ -1013,7 +1015,7 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private Node propertyVisual(Registro property, double width, double height) {
-        List<Path> photos = propertyImagePaths(property);
+        List<String> photos = propertyImageUris(property);
         return photos.isEmpty()
                 ? house(width, height, property.id("id_propiedad"))
                 : photoFrame(photos.getFirst(), width, height);
@@ -1024,9 +1026,15 @@ public final class AplicacionInmobiliaria extends Application {
                 .filter(file -> file.text("tipo").equals("Imagen") || file.text("tipo").equals("Video"))
                 .map(file -> {
                     try {
-                        Path path = service.attachmentPath(property.id("id_propiedad"), file.id("id"), false);
-                        return Files.isRegularFile(path)
-                                ? new ElementoGaleria(path, file.text("tipo").equals("Video")) : null;
+                        String stored = file.text("archivo");
+                        String uri;
+                        if (stored.startsWith("https://") || stored.startsWith("http://")) uri = stored;
+                        else {
+                            Path path = service.attachmentPath(property.id("id_propiedad"), file.id("id"), false);
+                            if (!Files.isRegularFile(path)) return null;
+                            uri = path.toUri().toString();
+                        }
+                        return new ElementoGaleria(uri, file.text("tipo").equals("Video"));
                     } catch (IllegalArgumentException e) {
                         return null;
                     }
@@ -1054,26 +1062,32 @@ public final class AplicacionInmobiliaria extends Application {
                 thumbnail.getStyleClass().add("gallery-video-thumb");
                 thumbnail.getChildren().add(label("▶  VIDEO", "gallery-video-label"));
             } else {
-                thumbnail.getChildren().add(photoFrame(item.path(), 92, 64));
+                thumbnail.getChildren().add(photoFrame(item.uri(), 92, 64));
             }
             thumbnail.getStyleClass().add("property-thumbnail");
             thumbnail.setOnMouseClicked(e -> showGalleryItem(main, item, width, height));
             thumbnails.getChildren().add(thumbnail);
         }
-        VBox gallery = new VBox(10, main, thumbnails);
+        ScrollPane thumbnailScroll = new ScrollPane(thumbnails);
+        thumbnailScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        thumbnailScroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        thumbnailScroll.setFitToHeight(true);
+        thumbnailScroll.setPrefHeight(78);
+        thumbnailScroll.getStyleClass().add("gallery-thumbnail-scroll");
+        VBox gallery = new VBox(10, main, thumbnailScroll);
         gallery.getStyleClass().add("property-gallery");
         return gallery;
     }
 
     private void showGalleryItem(StackPane main, ElementoGaleria item, double width, double height) {
         stopActiveMedia();
-        Path path = item.path();
+        String uri = item.uri();
         if (!item.video()) {
-            main.getChildren().setAll(photoFrame(path, width, height));
+            main.getChildren().setAll(photoFrame(uri, width, height));
             return;
         }
         try {
-            Media media = new Media(path.toUri().toString());
+            Media media = new Media(uri);
             MediaPlayer player = new MediaPlayer(media);
             activeMediaPlayer = player;
             MediaView view = new MediaView(player);
@@ -1130,7 +1144,7 @@ public final class AplicacionInmobiliaria extends Application {
                 Throwable failure = player.getError() != null ? player.getError() : media.getError();
                 if (failure != null) failure.printStackTrace();
                 stopActiveMedia();
-                showVideoUnavailable(main, path);
+                showVideoUnavailable(main, uri);
             };
             player.setOnError(failed);
             player.setOnHalted(failed);
@@ -1151,19 +1165,21 @@ public final class AplicacionInmobiliaria extends Application {
         } catch (RuntimeException e) {
             e.printStackTrace();
             stopActiveMedia();
-            showVideoUnavailable(main, path);
+            showVideoUnavailable(main, uri);
         }
     }
 
-    private void showVideoUnavailable(StackPane main, Path path) {
+    private void showVideoUnavailable(StackPane main, String uri) {
         Label message = label("No se pudo reproducir este video dentro del sistema. "
                 + "Para verlo aquí, usá MP4 con video H.264 y audio AAC. "
                 + "También podés abrir el archivo con el reproductor de tu equipo.", "subtitle");
         message.setWrapText(true);
         message.setMaxWidth(460);
         VBox fallback = new VBox(16, message, secondary("Abrir video en el equipo", () -> safe(() -> {
-            if (!Files.isRegularFile(path)) throw new IllegalArgumentException("El archivo de video no está disponible en esta computadora.");
-            getHostServices().showDocument(path.toUri().toString());
+            URI source = URI.create(uri);
+            if ("file".equalsIgnoreCase(source.getScheme()) && !Files.isRegularFile(Path.of(source)))
+                throw new IllegalArgumentException("El archivo de video no está disponible en esta computadora.");
+            getHostServices().showDocument(uri);
         })));
         fallback.setAlignment(Pos.CENTER);
         fallback.setPadding(new Insets(24));
@@ -1577,21 +1593,37 @@ public final class AplicacionInmobiliaria extends Application {
         List<Registro> files = service.attachments(id, docs);
         if (files.isEmpty())
             box.getChildren().add(label("Todavía no se cargaron archivos.", "subtitle"));
-        for (Registro f : files)
-            box.getChildren()
-                    .add(
-                            secondary(
-                                    f.text("tipo")
-                                            + " · "
-                                            + (docs ? f.text("nombre") : "Archivo #" + f.id("id")),
-                                    () -> {
-                                        Path path = service.attachmentPath(id, f.id("id"), docs);
-                                        if (!Files.isRegularFile(path))
-                                            throw new IllegalArgumentException(
-                                                    "El archivo no está en la carpeta compartida"
-                                                            + " configurada.");
-                                        getHostServices().showDocument(path.toUri().toString());
-                                    }));
+        for (Registro f : files) {
+            boolean cloudDocument = docs && f.text("archivo").startsWith("cloudinary-private|");
+            String label = f.text("tipo") + " · " + (docs ? f.text("nombre") : "Archivo #" + f.id("id"));
+            Button open = secondary(label, () -> {
+                try {
+                    if (cloudDocument) {
+                        getHostServices().showDocument(service.privateDocumentUrl(id, f.id("id")));
+                    } else {
+                        Path path = service.attachmentPath(id, f.id("id"), docs);
+                        if (!Files.isRegularFile(path))
+                            throw new IllegalArgumentException("El archivo local no está disponible.");
+                        getHostServices().showDocument(path.toUri().toString());
+                    }
+                } catch (Exception e) {
+                    throw new IllegalArgumentException(e.getMessage(), e);
+                }
+            });
+            if (docs && !cloudDocument && service.privateDocumentsConfigured()) {
+                Button migrate = secondary("Subir a la nube", () -> {
+                    try {
+                        Path local = service.attachmentPath(id, f.id("id"), true);
+                        service.migratePrivateDocument(id, f.id("id"), local);
+                        info("El documento ya está guardado en la nube y disponible para el equipo.");
+                        propertyDetails(id);
+                    } catch (Exception e) {
+                        throw new IllegalArgumentException(e.getMessage(), e);
+                    }
+                });
+                box.getChildren().add(row(open, migrate));
+            } else box.getChildren().add(open);
+        }
     }
 
     private void upload(int id) { upload(id, false); }
