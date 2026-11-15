@@ -47,6 +47,7 @@ public final class AplicacionInmobiliaria extends Application {
     private final BorderPane root = new BorderPane();
     private VBox content;
     private String activePage = "Iniciar sesión";
+    private Runnable currentPageReload;
     private MediaPlayer activeMediaPlayer;
 
     @Override
@@ -123,6 +124,7 @@ public final class AplicacionInmobiliaria extends Application {
             header.getChildren().addAll(
                     label("◉", "admin-avatar"),
                     new VBox(2, label("Admin", "admin-name"), label("Administrador", "admin-caption")),
+                    button("↻ Recargar", this::reloadCurrentPage),
                     secondary("Notificaciones", this::notifications),
                     button("Cerrar sesión", () -> {
                         service.logout();
@@ -159,7 +161,11 @@ public final class AplicacionInmobiliaria extends Application {
         }
         if (service.signedIn()) {
             header.getChildren().addAll(
-                            button("Mi perfil", this::profile),
+                            button("↻ Recargar", this::reloadCurrentPage),
+                            button("Mi perfil", () -> {
+                                currentPageReload = this::profile;
+                                profile();
+                            }),
                             label(
                                     service.current().text("nombre") + " · " + roleName(),
                                     "subtitle"),
@@ -190,7 +196,11 @@ public final class AplicacionInmobiliaria extends Application {
                         () -> interests(service.current().id("id_usuario")),
                         () -> preferences(service.current().id("id_usuario")), this::notifications,
                         () -> propertyForm(null));
-        for (ElementoMenuPanel item : roleMenu) nav.getChildren().add(button(item.nombre(), item.accion()));
+        for (ElementoMenuPanel item : roleMenu)
+            nav.getChildren().add(button(item.nombre(), () -> {
+                currentPageReload = item.accion();
+                item.accion().run();
+            }));
         Region spacer = new Region();
         VBox.setVgrow(spacer, Priority.ALWAYS);
         nav.getChildren().add(spacer);
@@ -249,9 +259,18 @@ public final class AplicacionInmobiliaria extends Application {
                 for (Node node : menu.getChildren())
                     if (node instanceof Button item) item.getStyleClass().remove("active");
             button.getStyleClass().add("active");
+            currentPageReload = action;
             safe(action);
         });
         return button;
+    }
+
+    private void reloadCurrentPage() {
+        if (currentPageReload == null) {
+            info("Elegí primero una sección para actualizar.");
+            return;
+        }
+        safe(currentPageReload);
     }
 
     private void safe(Runnable action) {
@@ -344,6 +363,13 @@ public final class AplicacionInmobiliaria extends Application {
         HBox h = new HBox(12, nodes);
         h.setAlignment(Pos.CENTER_LEFT);
         return h;
+    }
+
+    private static void showOnlyWhenSelected(CheckBox selected, Node... fields) {
+        for (Node field : fields) {
+            field.visibleProperty().bind(selected.selectedProperty());
+            field.managedProperty().bind(selected.selectedProperty());
+        }
     }
 
     private static FlowPane flow(Node... nodes) {
@@ -1162,6 +1188,8 @@ public final class AplicacionInmobiliaria extends Application {
         return switch (type) {
             case "Impuesto" -> "Comprobante de impuesto";
             case "Servicio" -> "Comprobante de servicio";
+            case "Reglamento" -> "Reglamento de copropiedad";
+            case "Otra" -> "Otra documentación";
             default -> type;
         };
     }
@@ -1172,14 +1200,16 @@ public final class AplicacionInmobiliaria extends Application {
             case "Escritura" -> "Subí una copia o foto legible de la escritura de la propiedad.";
             case "Impuesto" -> "Subí una boleta o comprobante de impuesto inmobiliario o municipal. El cálculo de importes se hace en el apartado de abajo.";
             case "Servicio" -> "Subí una boleta o comprobante de luz, agua o gas de esta propiedad.";
+            case "Reglamento" -> "Subí el reglamento de copropiedad del edificio o complejo.";
+            case "Otra" -> "Adjuntá otro documento útil e indicá su tipo en el nombre del archivo.";
             default -> "Seleccioná una foto o un video para la galería de la propiedad.";
         };
     }
 
     private ComboBox<String> documentChoice(Formulario form, boolean documentsOnly) {
         ComboBox<String> choice = form.choice("tipo", "1. ¿Qué vas a subir?", documentsOnly ? "Plano" : "Imagen",
-                documentsOnly ? new String[]{"Plano", "Escritura", "Impuesto", "Servicio"}
-                        : new String[]{"Imagen", "Video", "Plano", "Escritura", "Impuesto", "Servicio"});
+                documentsOnly ? new String[]{"Plano", "Escritura", "Impuesto", "Servicio", "Reglamento", "Otra"}
+                        : new String[]{"Imagen", "Video", "Plano", "Escritura", "Impuesto", "Servicio", "Reglamento", "Otra"});
         choice.setConverter(new javafx.util.StringConverter<String>() {
             public String toString(String value) { return value == null ? "" : documentName(value); }
             public String fromString(String value) { return value; }
@@ -1188,14 +1218,18 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private VBox pendingDocumentsPanel(Map<Path, String> pending) {
+        return pendingDocumentsPanel(pending, () -> {});
+    }
+
+    private VBox pendingDocumentsPanel(Map<Path, String> pending, Runnable selectionChanged) {
         Formulario form = new Formulario(1);
         ComboBox<String> choice = documentChoice(form, true);
         Label help = label(documentHelp(choice.getValue()), "subtitle");
         choice.valueProperty().addListener((o, old, value) -> help.setText(documentHelp(value)));
         VBox list = new VBox(8);
-        Label status = label("Todavía no seleccionaste documentos.", "subtitle");
-        Runnable updateStatus = () -> status.setText(pending.isEmpty() ? "Todavía no seleccionaste documentos."
-                : "Documentos seleccionados: " + pending.size() + ". Se guardarán al guardar el borrador o enviar a revisión.");
+        Label status = label("Documentos seleccionados: 0/8.", "subtitle");
+        Runnable updateStatus = () -> status.setText("Documentos seleccionados: " + pending.size()
+                + "/8. Se guardarán al guardar el borrador o enviar a revisión.");
         Runnable refresh = () -> {
             list.getChildren().clear();
             pending.forEach((path, type) -> {
@@ -1207,6 +1241,7 @@ public final class AplicacionInmobiliaria extends Application {
                     pending.remove(path);
                     list.getChildren().remove(line);
                     updateStatus.run();
+                    selectionChanged.run();
                 }));
                 list.getChildren().add(line);
             });
@@ -1220,10 +1255,28 @@ public final class AplicacionInmobiliaria extends Application {
                     chooser.setTitle("Elegir: " + documentName(choice.getValue()));
                     chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("PDF o fotos (JPG, PNG)", "*.pdf", "*.jpg", "*.jpeg", "*.png"));
                     var files = chooser.showOpenMultipleDialog(stage);
-                    if (files != null) for (var file : files) pending.put(file.toPath(), choice.getValue());
+                    if (files != null) for (var file : files) {
+                        Path path = file.toPath();
+                        if (pending.containsKey(path)) continue;
+                        if (pending.size() >= 8) {
+                            info("Podés adjuntar hasta 8 documentos por envío.");
+                            break;
+                        }
+                        try {
+                            if (Files.size(path) > 2L * 1024 * 1024) {
+                                info("Cada documento puede pesar hasta 2 MB: " + file.getName());
+                                continue;
+                            }
+                        } catch (Exception e) {
+                            info("No se pudo leer el archivo " + file.getName());
+                            continue;
+                        }
+                        pending.put(path, choice.getValue());
+                    }
                     refresh.run();
+                    selectionChanged.run();
                 }),
-                label("Podés elegir varios archivos. PDF o fotos JPG/PNG, hasta 50 MB cada uno. Revisá que el texto se lea bien.", "subtitle"),
+                label("Podés adjuntar hasta 8 documentos en total, de hasta 2 MB cada uno. PDF o fotos JPG/PNG. Revisá que el texto se lea bien.", "subtitle"),
                 status, list);
         refresh.run();
         return box;
@@ -1363,6 +1416,7 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void dashboard() {
+        currentPageReload = this::dashboard;
         if (service.role() != 3) service.generarAlertasDeSeguimiento();
         if (service.role() == 1) {
             adminDashboard();
@@ -1660,6 +1714,8 @@ public final class AplicacionInmobiliaria extends Application {
                         "Localidad",
                         "propietario",
                         "Propietario",
+                        "agente_responsable",
+                        "Agente responsable",
                         "verificacion",
                         "Publicación",
                         "comercial",
@@ -1697,7 +1753,7 @@ public final class AplicacionInmobiliaria extends Application {
         if (service.role() != 3) top.getChildren().add(mine);
         FlowPane actions =
                 flow(
-                        button("Ver ficha", () -> propertyDetails(selected(t).id("id_propiedad"))),
+                        secondary("Ver archivos", () -> propertyFiles(selected(t).id("id_propiedad"))),
                         secondary("Editar", () -> propertyForm(selected(t))),
                         secondary(
                                 "Enviar a revisión",
@@ -1711,6 +1767,32 @@ public final class AplicacionInmobiliaria extends Application {
                             secondary("Cambiar estado", () -> stateForm(selected(t))),
                             secondary("Registrar cierre", () -> closeForm(selected(t))));
         content.getChildren().addAll(top, card(t, actions));
+    }
+
+    private void propertyFiles(int id) {
+        currentPageReload = () -> propertyFiles(id);
+        Registro property = service.property(id);
+        page("Archivos · " + property.text("titulo"),
+                "Fotos, videos y documentación asociados a esta propiedad.");
+        content.getChildren().add(secondary("← Volver a propiedades", this::propertyList));
+
+        List<Registro> media = service.attachments(id, false);
+        VBox mediaBox = card(label("Fotos y videos", "section-title"));
+        if (media.isEmpty()) {
+            mediaBox.getChildren().add(label("Esta propiedad todavía no tiene fotos ni videos.", "subtitle"));
+        } else {
+            double width = Math.min(900, Math.max(320, stage.getScene().getWidth() - 330));
+            mediaBox.getChildren().add(propertyGallery(property, width, width * 370 / 650));
+        }
+        content.getChildren().add(mediaBox);
+
+        if (service.canViewPrivateProperty(id)) {
+            VBox documents = card(
+                    label("Planos, escrituras y otros documentos", "section-title"),
+                    label("Archivos privados: solo visibles para el propietario, administración y el agente responsable.", "subtitle"));
+            addFileButtons(documents, id, true);
+            content.getChildren().add(documents);
+        }
     }
 
     private void propertyForm(Registro original) {
@@ -1844,6 +1926,8 @@ public final class AplicacionInmobiliaria extends Application {
             prices.put(id, price);
             minimumPrices.put(id, minimum);
             currencies.put(id, currency);
+            showOnlyWhenSelected(on, price, currency);
+            if (id == 1 && service.role() != 3) showOnlyWhenSelected(on, minimum);
             offersBox.getChildren().add(id == 1 && service.role() != 3
                     ? row(on, price, currency, minimum) : row(on, price, currency));
         }
@@ -1933,24 +2017,35 @@ public final class AplicacionInmobiliaria extends Application {
                 label("Podés proponer venta, alquiler o ambas operaciones. Cada una tiene su precio y moneda.", "subtitle"));
         Map<Integer, CheckBox> enabled = new LinkedHashMap<>();
         Map<Integer, TextField> prices = new HashMap<>();
+        Map<Integer, TextField> minimumPrices = new HashMap<>();
         Map<Integer, ComboBox<String>> currencies = new HashMap<>();
         for (Registro type : service.lookup("tipos_transaccion")) {
             int typeId = type.id("id");
             CheckBox on = new CheckBox(type.text("etiqueta"));
             TextField price = new TextField();
             price.setPromptText("Precio");
+            TextField minimum = new TextField();
+            minimum.setPromptText("Mínimo aceptado por el propietario");
             ComboBox<String> currency = new ComboBox<>(FXCollections.observableArrayList("USD", "ARS"));
             currency.setValue("USD");
             enabled.put(typeId, on);
             prices.put(typeId, price);
+            minimumPrices.put(typeId, minimum);
             currencies.put(typeId, currency);
-            offersBox.getChildren().add(row(on, price, currency));
+            showOnlyWhenSelected(on, price, currency);
+            if (typeId == 1) {
+                showOnlyWhenSelected(on, minimum);
+                offersBox.getChildren().add(row(on, price, currency, minimum));
+            } else {
+                offersBox.getChildren().add(row(on, price, currency));
+            }
         }
         Map<Integer, CheckBox> features = featureChecks(Set.of());
         Map<Path, String> pendingDocuments = new LinkedHashMap<>();
-        VBox documents = pendingDocumentsPanel(pendingDocuments);
+        Runnable[] refreshValidationRef = {() -> {}};
+        VBox documents = pendingDocumentsPanel(pendingDocuments, () -> refreshValidationRef[0].run());
         List<Path> pendingMedia = new ArrayList<>();
-        Label mediaStatus = label("Todavía no seleccionaste fotos ni videos.", "subtitle");
+        Label mediaStatus = label("Archivos seleccionados: 0/8.", "subtitle");
         mediaStatus.setWrapText(true);
         VBox media = card(label("Fotos y videos", "section-title"),
                 label("Los archivos se guardarán en la carpeta local de la aplicación y quedarán asociados a la solicitud.", "subtitle"),
@@ -1958,24 +2053,73 @@ public final class AplicacionInmobiliaria extends Application {
                     FileChooser chooser = new FileChooser();
                     chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Imágenes y videos", "*.jpg", "*.jpeg", "*.png", "*.webp", "*.mp4"));
                     List<java.io.File> files = chooser.showOpenMultipleDialog(stage);
-                    if (files != null) files.forEach(file -> { if (!pendingMedia.contains(file.toPath())) pendingMedia.add(file.toPath()); });
-                    mediaStatus.setText(pendingMedia.isEmpty() ? "Todavía no seleccionaste fotos ni videos."
-                            : "Seleccionados: " + pendingMedia.stream().map(path -> path.getFileName().toString()).collect(java.util.stream.Collectors.joining(", ")));
+                    if (files != null) for (java.io.File file : files) {
+                        Path path = file.toPath();
+                        if (pendingMedia.contains(path)) continue;
+                        if (pendingMedia.size() >= 8) {
+                            info("Podés adjuntar hasta 8 fotos o videos por solicitud.");
+                            break;
+                        }
+                        try {
+                            if (Files.size(path) > 2L * 1024 * 1024) {
+                                info("Cada foto o video puede pesar hasta 2 MB: " + file.getName());
+                                continue;
+                            }
+                        } catch (Exception e) {
+                            info("No se pudo leer el archivo " + file.getName());
+                            continue;
+                        }
+                        pendingMedia.add(path);
+                    }
+                    mediaStatus.setText("Archivos seleccionados: " + pendingMedia.size() + "/8"
+                            + (pendingMedia.isEmpty() ? "" : " · " + pendingMedia.stream()
+                                    .map(path -> path.getFileName().toString())
+                                    .collect(java.util.stream.Collectors.joining(", "))));
                 }), mediaStatus);
         CheckBox missingPlans = new CheckBox("Todavía no tengo los planos");
         CheckBox missingDeed = new CheckBox("Todavía no tengo la escritura");
+        Label validationStatus = label("Completá los campos marcados con * y elegí al menos una operación.", "subtitle");
+        validationStatus.setWrapText(true);
+        Runnable refreshValidation = () -> {
+            List<String> issues = ownerRequestMissingFields(f.values(), enabled, prices,
+                    minimumPrices, pendingDocuments, missingPlans.isSelected(), missingDeed.isSelected());
+            validationStatus.setText(issues.isEmpty()
+                    ? "Los datos obligatorios están completos."
+                    : "Para enviar, revisá: " + String.join(" · ", issues));
+        };
+        refreshValidationRef[0] = refreshValidation;
+        for (String key : List.of("titulo", "direccion", "localidad", "superficie_total_m2",
+                "ambientes", "dormitorios", "banos", "antiguedad_anos", "descripcion")) {
+            if (f.control(key) instanceof TextInputControl input)
+                input.textProperty().addListener((o, old, value) -> refreshValidation.run());
+        }
+        for (CheckBox option : enabled.values())
+            option.selectedProperty().addListener((o, old, value) -> refreshValidation.run());
+        prices.values().forEach(input -> input.textProperty().addListener((o, old, value) -> refreshValidation.run()));
+        minimumPrices.values().forEach(input -> input.textProperty().addListener((o, old, value) -> refreshValidation.run()));
+        missingPlans.selectedProperty().addListener((o, old, value) -> refreshValidation.run());
+        missingDeed.selectedProperty().addListener((o, old, value) -> refreshValidation.run());
         Formulario documentation = new Formulario(1);
         documentation.area("observaciones_documentacion", "Aclaración sobre documentación pendiente", "");
         List<ServicioInmobiliaria.PropertyTax> taxes = new ArrayList<>();
         VBox taxPanel = pendingTaxesPanel(taxes);
+        refreshValidation.run();
         content.getChildren().addAll(card(f), offersBox,
                 card(label("Características", "section-title"), flow(features.values().toArray(Node[]::new))),
                 media, documents,
                 card(label("Planos y escritura", "section-title"),
                         label("Adjuntá ambos documentos o indicá cuál todavía no tenés.", "subtitle"),
                         missingPlans, missingDeed, documentation),
-                taxPanel,
+                validationStatus, taxPanel,
                 flow(button("Enviar solicitud", () -> {
+                    List<String> currentIssues = ownerRequestMissingFields(f.values(), enabled, prices,
+                            minimumPrices, pendingDocuments, missingPlans.isSelected(), missingDeed.isSelected());
+                    validationStatus.setText(currentIssues.isEmpty()
+                            ? "Los datos obligatorios están completos."
+                            : "Para enviar, revisá: " + String.join(" · ", currentIssues));
+                    if (!currentIssues.isEmpty())
+                        throw new IllegalArgumentException("Antes de enviar, completá o revisá:\n• "
+                                + String.join("\n• ", currentIssues));
                     List<String> missing = new ArrayList<>();
                     Map<String, String> values = f.values();
                     Map<String, String> requiredFields = new LinkedHashMap<>();
@@ -2003,8 +2147,22 @@ public final class AplicacionInmobiliaria extends Application {
                             return;
                         }
                         try {
-                            proposed.add(new ServicioInmobiliaria.Offer(id,
-                                    money(rawPrice), currencies.get(id).getValue()));
+                            BigDecimal amount = money(rawPrice);
+                            String rawMinimum = minimumPrices.get(id).getText().trim();
+                            BigDecimal minimum = null;
+                            if (id == 1 && rawMinimum.isBlank()) {
+                                missing.add("Mínimo aceptado por el propietario para la venta");
+                                return;
+                            }
+                            if (id == 1) {
+                                minimum = money(rawMinimum);
+                                if (minimum.compareTo(amount) > 0) {
+                                    missing.add("El mínimo aceptado para la venta no puede superar el precio publicado");
+                                    return;
+                                }
+                            }
+                            proposed.add(new ServicioInmobiliaria.Offer(id, amount,
+                                    currencies.get(id).getValue(), minimum));
                         } catch (NumberFormatException invalidPrice) {
                             missing.add("Precio de " + operation + " (ingresá un número válido)");
                         }
@@ -2029,6 +2187,79 @@ public final class AplicacionInmobiliaria extends Application {
                     ownerRequestsPage();
                     info("La solicitud quedó enviada para revisión.");
                 }), secondary("Cancelar", this::propertyList)));
+    }
+
+    private List<String> ownerRequestMissingFields(Map<String, String> values,
+            Map<Integer, CheckBox> enabled, Map<Integer, TextField> prices,
+            Map<Integer, TextField> minimumPrices, Map<Path, String> pendingDocuments,
+            boolean missingPlans, boolean missingDeed) {
+        List<String> missing = new ArrayList<>();
+        Map<String, String> required = new LinkedHashMap<>();
+        required.put("titulo", "Título");
+        required.put("id_tipo_propiedad", "Tipo de propiedad");
+        required.put("direccion", "Dirección");
+        required.put("localidad", "Localidad");
+        required.put("superficie_total_m2", "Superficie total");
+        required.put("descripcion", "Descripción");
+        required.forEach((key, name) -> {
+            if (values.getOrDefault(key, "").isBlank()) missing.add(name);
+        });
+        String rawSurface = values.getOrDefault("superficie_total_m2", "").trim();
+        if (!rawSurface.isBlank()) {
+            try {
+                BigDecimal surface = money(rawSurface);
+                if (surface.signum() <= 0 || surface.compareTo(new BigDecimal("999999.99")) > 0)
+                    missing.add("Superficie total fuera del rango permitido");
+            } catch (NumberFormatException invalidNumber) {
+                missing.add("Superficie total debe ser numérica");
+            }
+        }
+        for (String key : List.of("ambientes", "dormitorios", "banos", "antiguedad_anos")) {
+            String value = values.getOrDefault(key, "").trim();
+            if (value.isBlank()) continue;
+            try {
+                int number = Integer.parseInt(value);
+                if (number < 0 || number > 1000) missing.add(key + " debe estar entre 0 y 1000");
+            } catch (NumberFormatException invalidNumber) {
+                missing.add(key + " debe ser un número entero");
+            }
+        }
+        if (!pendingDocuments.values().contains("Plano") && !missingPlans)
+            missing.add("Adjuntar planos o marcar que no se tienen");
+        if (!pendingDocuments.values().contains("Escritura") && !missingDeed)
+            missing.add("Adjuntar escritura o marcar que no se tiene");
+        boolean hasOperation = false;
+        for (Map.Entry<Integer, CheckBox> entry : enabled.entrySet()) {
+            if (!entry.getValue().isSelected()) continue;
+            hasOperation = true;
+            String operation = entry.getValue().getText();
+            String rawPrice = prices.get(entry.getKey()).getText().trim();
+            if (rawPrice.isBlank()) {
+                missing.add("Precio de " + operation);
+                continue;
+            }
+            try {
+                BigDecimal amount = money(rawPrice);
+                if (amount.signum() <= 0) missing.add("Precio de " + operation + " debe ser mayor a cero");
+                if (amount.scale() > 2 || amount.compareTo(new BigDecimal("9999999999.99")) > 0)
+                    missing.add("Precio de " + operation + " admite hasta 2 decimales y hasta 9.999.999.999,99");
+                if (entry.getKey() == 1) {
+                    String rawMinimum = minimumPrices.get(entry.getKey()).getText().trim();
+                    if (rawMinimum.isBlank()) missing.add("Mínimo aceptado para la venta");
+                    else {
+                        BigDecimal minimum = money(rawMinimum);
+                        if (minimum.signum() <= 0 || minimum.scale() > 2
+                                || minimum.compareTo(new BigDecimal("9999999999.99")) > 0
+                                || minimum.compareTo(amount) > 0)
+                            missing.add("Revisar el mínimo aceptado para la venta");
+                    }
+                }
+            } catch (NumberFormatException invalidNumber) {
+                missing.add("Ingresar un precio válido para " + operation);
+            }
+        }
+        if (!hasOperation) missing.add("Elegir venta, alquiler o alquiler temporario");
+        return missing;
     }
 
     private void stateForm(Registro p) {

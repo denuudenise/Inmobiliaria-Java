@@ -14,11 +14,14 @@ import java.util.Set;
 public final class PropiedadDAO {
     private static final String SELECT =
             "SELECT p.*,t.nombre AS tipo,e.nombre AS verificacion,c.nombre AS comercial,"
-                + "CASE WHEN u.id_rol=1 THEN 'Admin' ELSE CONCAT(u.nombre,' ',u.apellido) END AS propietario FROM propiedades p "
+                + "CASE WHEN u.id_rol=1 THEN 'Admin' ELSE CONCAT(u.nombre,' ',u.apellido) END AS propietario,"
+                + "CONCAT(ua.nombre,' ',ua.apellido) AS agente_responsable FROM propiedades p "
                 + "JOIN tipos_propiedad t ON t.id_tipo_propiedad=p.id_tipo_propiedad "
                 + "JOIN estados_verificacion e ON e.id_estado_verificacion=p.id_estado_verificacion "
                 + "JOIN estados_comerciales c ON c.id_estado_comercial=p.id_estado_comercial "
-                + "LEFT JOIN usuarios u ON u.id_usuario=p.id_propietario ";
+                + "LEFT JOIN usuarios u ON u.id_usuario=p.id_propietario "
+                + "LEFT JOIN clientes cl ON cl.id_cliente=p.id_propietario "
+                + "LEFT JOIN usuarios ua ON ua.id_usuario=COALESCE(cl.id_agente_asignado,p.id_agente_creador) ";
 
     private final ConsultasSQL jdbc;
 

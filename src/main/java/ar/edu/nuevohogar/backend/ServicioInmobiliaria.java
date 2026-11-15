@@ -900,9 +900,15 @@ public final class ServicioInmobiliaria {
         boolean media = type.equals("Imagen") || type.equals("Video");
         Set<String> allowed = type.equals("Imagen") ? Set.of("jpg", "jpeg", "png", "webp")
                 : type.equals("Video") ? Set.of("mp4") : Set.of("pdf", "jpg", "jpeg", "png", "webp");
+        if (!Set.of("Imagen", "Video", "Plano", "Escritura", "Impuesto", "Servicio", "Reglamento", "Otra").contains(type))
+            throw new IllegalArgumentException("Tipo de archivo inválido.");
         if (!allowed.contains(ext)) throw new IllegalArgumentException("Formato no admitido para " + type + ".");
-        if (!Files.isRegularFile(source) || Files.size(source) == 0 || Files.size(source) > 50L * 1024 * 1024)
-            throw new IllegalArgumentException("El archivo debe existir y pesar menos de 50 MB.");
+        if (!Files.isRegularFile(source) || Files.size(source) == 0 || Files.size(source) > 2L * 1024 * 1024)
+            throw new IllegalArgumentException("El archivo debe existir y pesar hasta 2 MB.");
+        if (media && ownerRequestMedia(id).size() >= 8)
+            throw new IllegalArgumentException("La solicitud admite hasta 8 fotos o videos.");
+        if (!media && ownerRequestDocuments(id).size() >= 8)
+            throw new IllegalArgumentException("La solicitud admite hasta 8 documentos.");
         Path folder = media && db.webMediaRoot != null
                 ? db.webMediaRoot.resolve("archivos").resolve("solicitudes")
                 : db.storage.resolve("solicitudes").resolve(Integer.toString(id));
@@ -2058,7 +2064,7 @@ public final class ServicioInmobiliaria {
         String name = source.getFileName().toString();
         String ext = name.substring(name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
         boolean media = type.equals("Imagen") || type.equals("Video");
-        if (!Set.of("Imagen", "Video", "Plano", "Escritura", "Servicio", "Impuesto").contains(type))
+        if (!Set.of("Imagen", "Video", "Plano", "Escritura", "Servicio", "Impuesto", "Reglamento", "Otra").contains(type))
             throw new IllegalArgumentException("Tipo de archivo inválido.");
         if (!(type.equals("Imagen")
                 ? image.contains(ext)
