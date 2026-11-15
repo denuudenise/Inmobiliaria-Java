@@ -42,13 +42,15 @@ public final class GestionComercialDAO {
         return consultas.list("SELECT t.*,CONCAT(u.nombre,' ',u.apellido) AS cliente,p.titulo AS propiedad "
                 + "FROM tareas_seguimiento t JOIN usuarios u ON u.id_usuario=t.id_cliente "
                 + "LEFT JOIN propiedades p ON p.id_propiedad=t.id_propiedad "
-                + "WHERE t.id_agente=? ORDER BY CASE WHEN t.estado='Pendiente' THEN 0 ELSE 1 END,t.fecha_limite", agente);
+                + "WHERE t.id_agente=? AND COALESCE(SUBSTRING(t.detalle,1,10),'')<>'NH_RENT_V1' "
+                + "ORDER BY CASE WHEN t.estado='Pendiente' THEN 0 ELSE 1 END,t.fecha_limite", agente);
     }
     public List<Registro> todasLasTareas() {
         return consultas.list("SELECT t.*,CONCAT(u.nombre,' ',u.apellido) AS cliente,p.titulo AS propiedad,"
                 + "CONCAT(a.nombre,' ',a.apellido) AS agente FROM tareas_seguimiento t "
                 + "JOIN usuarios u ON u.id_usuario=t.id_cliente JOIN usuarios a ON a.id_usuario=t.id_agente "
-                + "LEFT JOIN propiedades p ON p.id_propiedad=t.id_propiedad ORDER BY t.fecha_limite");
+                + "LEFT JOIN propiedades p ON p.id_propiedad=t.id_propiedad "
+                + "WHERE COALESCE(SUBSTRING(t.detalle,1,10),'')<>'NH_RENT_V1' ORDER BY t.fecha_limite");
     }
     public int crearTarea(Connection c, int agent, int client, Integer property, String title, String detail, LocalDateTime due) throws Exception {
         return insert(c, "INSERT INTO tareas_seguimiento(id_agente,id_cliente,id_propiedad,titulo,detalle,fecha_limite) VALUES(?,?,?,?,?,?)",

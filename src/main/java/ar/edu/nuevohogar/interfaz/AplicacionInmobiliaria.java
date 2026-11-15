@@ -3227,6 +3227,8 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void operations() {
+        currentPageReload = this::operations;
+        service.generarAlertasDeSeguimiento();
         page(
                 "Ventas y alquileres",
                 "Historial de cierres. Una propiedad puede volver al mercado sin perder operaciones"
@@ -3254,6 +3256,66 @@ public final class AplicacionInmobiliaria extends Application {
                                         "fecha_cierre",
                                         "Fecha"),
                                 button("Exportar CSV", () -> export(ops, "operaciones.csv"))));
+        List<Registro> rentals = service.alquileresActivos();
+        TableView<Registro> rentalTable = table(rentals, "id_operacion", "Operación", "propiedad", "Propiedad",
+                "cliente", "Inquilino", "agente", "Agente", "importe_base", "Importe mensual", "moneda", "Moneda");
+        content.getChildren().add(card(
+                label("Alquileres activos · control mensual de pagos", "section-title"),
+                label("Creá una cuota por período, registrá pagos parciales o completos y revisá vencimientos.", "subtitle"),
+                rentalTable,
+                button("Ver cuotas del alquiler", () -> rentalPayments(selected(rentalTable).id("id_operacion")))));
+    }
+
+    private void rentalPayments(int operationId) {
+        currentPageReload = () -> rentalPayments(operationId);
+        service.generarAlertasDeSeguimiento();
+        Registro rental = service.alquileresActivos().stream()
+                .filter(row -> row.id("id_operacion") == operationId)
+                .findFirst().orElseThrow(() -> new IllegalArgumentException("El alquiler no está activo."));
+        page("Cuotas · " + rental.text("propiedad"),
+                rental.text("cliente") + " · Agente: " + rental.text("agente"));
+        TableView<Registro> installments = table(service.cuotasAlquiler(operationId),
+                "periodo", "Período", "fecha_limite", "Vencimiento", "importe_esperado", "Importe", "moneda", "Moneda",
+                "pagado", "Pagado", "saldo", "Saldo", "estado_cuota", "Estado", "ultimo_pago", "Último pago", "medio_pago", "Medio");
+        content.getChildren().addAll(
+                flow(button("+ Crear cuota del período", () -> createRentInstallment(rental)),
+                        secondary("Registrar pago", () -> recordRentPayment(operationId, selected(installments))),
+                        secondary("Volver a alquileres", this::operations)),
+                card(installments));
+    }
+
+    private void createRentInstallment(Registro rental) {
+        Formulario form = new Formulario();
+        form.text("periodo", "Período (AAAA-MM) *", YearMonth.now().toString());
+        form.text("amount", "Importe de la cuota *", rental.money("importe_base").toPlainString());
+        form.choice("currency", "Moneda", rental.text("moneda"), "ARS", "USD");
+        form.date("due", "Vencimiento *", LocalDate.now().plusDays(5).toString());
+        dialog("Crear cuota de alquiler", card(form,
+                label("No duplica cuotas ya creadas para el mismo período. Podés registrar varios pagos parciales.", "subtitle")),
+                "Crear cuota", () -> {
+                    YearMonth period;
+                    try { period = YearMonth.parse(form.value("periodo")); }
+                    catch (RuntimeException e) { throw new IllegalArgumentException("Usá el formato AAAA-MM para el período."); }
+                    service.crearCuotaAlquiler(rental.id("id_operacion"), period,
+                            money(form.value("amount")), form.value("currency"), LocalDate.parse(form.value("due")));
+                    rentalPayments(rental.id("id_operacion"));
+                });
+    }
+
+    private void recordRentPayment(int operationId, Registro installment) {
+        if (installment.text("estado_cuota").equals("Completada"))
+            throw new IllegalArgumentException("Esta cuota ya está pagada por completo.");
+        Formulario form = new Formulario();
+        form.text("amount", "Importe recibido *", installment.money("saldo").toPlainString());
+        form.date("paid_on", "Fecha del pago *", LocalDate.now().toString());
+        form.choice("method", "Medio de pago", "Transferencia", "Transferencia", "Efectivo", "Depósito", "Otro");
+        dialog("Registrar pago · " + installment.text("periodo"), card(form,
+                label("Saldo pendiente: " + installment.text("moneda") + " " + formatNumber(installment.money("saldo")), "subtitle")),
+                "Guardar pago", () -> {
+                    service.registrarPagoAlquiler(installment.id("id_tarea"), money(form.value("amount")),
+                            LocalDate.parse(form.value("paid_on")), form.value("method"));
+                    rentalPayments(operationId);
+                });
     }
 
     private void notifications() {

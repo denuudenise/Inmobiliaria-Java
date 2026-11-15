@@ -359,6 +359,26 @@ public final class ComprobacionesIntegracion {
         check(admin.buildings().getFirst().id("unidades") == 1, "Edificio conserva sus unidades");
         agent.close(pid, cid, 2, new BigDecimal("900000"), new BigDecimal("10000"));
         check(admin.operations().size() == 1, "Cierre y comisión registrados");
+        int rentalOperation = admin.alquileresActivos().getFirst().id("id_operacion");
+        java.time.YearMonth rentalPeriod = java.time.YearMonth.now();
+        int rentTask = agent.crearCuotaAlquiler(rentalOperation, rentalPeriod,
+                new BigDecimal("900000.00"), "ARS", java.time.LocalDate.now().plusDays(1));
+        check(admin.cuotasAlquiler(rentalOperation).stream().anyMatch(r -> r.id("id_tarea") == rentTask
+                        && r.text("estado_cuota").equals("Pendiente")),
+                "La cuota mensual queda guardada en las tareas existentes sin migración de esquema");
+        denied(() -> admin.crearCuotaAlquiler(rentalOperation, rentalPeriod,
+                new BigDecimal("900000.00"), "ARS", java.time.LocalDate.now().plusDays(7)),
+                "No se duplica una cuota del mismo período");
+        agent.registrarPagoAlquiler(rentTask, new BigDecimal("400000.00"), java.time.LocalDate.now(), "Transferencia");
+        check(admin.cuotasAlquiler(rentalOperation).getFirst().text("estado_cuota").equals("Parcial")
+                        && admin.cuotasAlquiler(rentalOperation).getFirst().money("saldo").compareTo(new BigDecimal("500000.00")) == 0,
+                "El seguimiento conserva pagos parciales y saldo pendiente");
+        admin.generarAlertasDeSeguimiento();
+        check(agent.notifications().stream().anyMatch(r -> r.text("mensaje").contains("Alerta de alquiler")),
+                "El agente recibe alerta cuando una cuota se acerca al vencimiento");
+        agent.registrarPagoAlquiler(rentTask, new BigDecimal("500000.00"), java.time.LocalDate.now(), "Efectivo");
+        check(admin.cuotasAlquiler(rentalOperation).getFirst().text("estado_cuota").equals("Completada"),
+                "La cuota pasa a pagada al cubrir el importe mensual");
         denied(
                 () -> agent.close(pid, cid, 2, new BigDecimal("900000"), BigDecimal.ZERO),
                 "Doble cierre rechazado");

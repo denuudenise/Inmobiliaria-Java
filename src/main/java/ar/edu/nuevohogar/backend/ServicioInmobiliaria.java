@@ -16,6 +16,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.util.*;
 
 /** Reglas del negocio compartidas por todas las pantallas; permisos comprobados aquí. */
@@ -1164,6 +1165,148 @@ public final class ServicioInmobiliaria {
                 role() == 2 ? new Object[] {actor, actor, actor} : new Object[] {});
     }
 
+    private static final String RENT_LEDGER_MARKER = "NH_RENT_V1";
+
+    /** Contratos que representan alquileres vigentes, derivados del cierre y estado de la propiedad. */
+    public List<Registro> alquileresActivos() {
+        int actor = require(1, 2);
+        String scope = role() == 2
+                ? " AND (c.id_agente_cierre=? OR p.id_agente_creador=? OR EXISTS(SELECT 1 FROM clientes cl "
+                        + "WHERE cl.id_cliente=c.id_cliente_comprador AND cl.id_agente_asignado=?))"
+                : "";
+        Object[] args = role() == 2 ? new Object[] {actor, actor, actor} : new Object[] {};
+        return dao.list("SELECT c.id_operacion,c.id_propiedad,c.id_cliente_comprador AS id_cliente,"
+                + "COALESCE(cl.id_agente_asignado,c.id_agente_cierre) AS id_agente,"
+                + "c.precio_final AS importe_base,c.moneda,c.fecha_cierre,p.titulo AS propiedad,"
+                + "CONCAT(u.nombre,' ',u.apellido) AS cliente,CONCAT(a.nombre,' ',a.apellido) AS agente "
+                + "FROM propiedades_cerradas c JOIN propiedades p ON p.id_propiedad=c.id_propiedad "
+                + "JOIN usuarios u ON u.id_usuario=c.id_cliente_comprador "
+                + "JOIN usuarios a ON a.id_usuario=COALESCE((SELECT cl2.id_agente_asignado FROM clientes cl2 "
+                + "WHERE cl2.id_cliente=c.id_cliente_comprador),c.id_agente_cierre) "
+                + "LEFT JOIN clientes cl ON cl.id_cliente=c.id_cliente_comprador "
+                + "WHERE c.id_tipo_transaccion IN (2,3) AND p.id_estado_comercial=4 "
+                + "AND c.id_operacion=(SELECT MAX(cx.id_operacion) FROM propiedades_cerradas cx "
+                + "WHERE cx.id_propiedad=c.id_propiedad)" + scope + " ORDER BY c.fecha_cierre DESC", args);
+    }
+
+    /** Cuotas mensuales almacenadas como recordatorios especializados, sin alterar el esquema existente. */
+    public List<Registro> cuotasAlquiler(int operationId) {
+        Registro rental = rentalForAccess(operationId);
+        List<Registro> rows = dao.list("SELECT id_tarea,titulo,detalle,fecha_limite,estado,fecha_completada "
+                + "FROM tareas_seguimiento WHERE id_propiedad=? AND id_cliente=? ORDER BY fecha_limite DESC",
+                rental.id("id_propiedad"), rental.id("id_cliente"));
+        return rows.stream().filter(row -> row.text("detalle").startsWith(RENT_LEDGER_MARKER + "|" + operationId + "|"))
+                .map(this::rentalInstallmentRow).toList();
+    }
+
+    public int crearCuotaAlquiler(int operationId, YearMonth period, BigDecimal amount,
+            String currency, LocalDate dueDate) {
+        int actor = require(1, 2);
+        Registro rental = rentalForAccess(operationId);
+        if (period == null || dueDate == null || amount == null || amount.signum() <= 0
+                || amount.scale() > 2 || amount.compareTo(new BigDecimal("9999999999.99")) > 0
+                || !Set.of("ARS", "USD").contains(currency))
+            throw new IllegalArgumentException("Revisá el período, el vencimiento y el importe de la cuota.");
+        String prefix = RENT_LEDGER_MARKER + "|" + operationId + "|" + period;
+        return db.transaction(c -> {
+            List<Registro> existing = list(c, "SELECT id_tarea,detalle FROM tareas_seguimiento "
+                    + "WHERE id_propiedad=? AND id_cliente=?", rental.id("id_propiedad"), rental.id("id_cliente"));
+            if (existing.stream().anyMatch(row -> row.text("detalle").startsWith(prefix + "|")))
+                throw new IllegalArgumentException("Ya existe una cuota para " + period + ".");
+            int agent = role() == 2 ? actor : rental.id("id_agente");
+            String title = "Cobro alquiler " + period + " · " + rental.text("propiedad");
+            String detail = prefix + "|" + amount.toPlainString() + "|" + currency + "|";
+            int id = insert(c, "INSERT INTO tareas_seguimiento(id_agente,id_cliente,id_propiedad,titulo,detalle,fecha_limite) "
+                    + "VALUES(?,?,?,?,?,?)", agent, rental.id("id_cliente"), rental.id("id_propiedad"),
+                    title, detail, dueDate.atTime(23, 59));
+            audit(c, actor, "Cuota de alquiler creada", "tareas_seguimiento", id,
+                    rental.text("propiedad") + " · " + period + " · " + currency + " " + amount);
+            return id;
+        });
+    }
+
+    public void registrarPagoAlquiler(int taskId, BigDecimal amount, LocalDate paidOn, String method) {
+        int actor = require(1, 2);
+        if (amount == null || amount.signum() <= 0 || amount.scale() > 2 || paidOn == null
+                || paidOn.isAfter(LocalDate.now())
+                || !Set.of("Efectivo", "Transferencia", "Depósito", "Otro").contains(method))
+            throw new IllegalArgumentException("Revisá el importe, la fecha y el medio de pago.");
+        db.transaction(c -> {
+            Registro task = list(c, "SELECT * FROM tareas_seguimiento WHERE id_tarea=? FOR UPDATE", taskId)
+                    .stream().findFirst().orElseThrow(() -> new IllegalArgumentException("La cuota no existe."));
+            String[] fields = rentalLedgerFields(task.text("detalle"));
+            int operationId = Integer.parseInt(fields[1]);
+            if (role() == 2 && !clientAccessible(actor, task.id("id_cliente")))
+                throw new IllegalArgumentException("La cuota no pertenece a tu cartera.");
+            if (amount.compareTo(new BigDecimal(fields[3]).subtract(rentalPaidTotal(fields[5]))) > 0)
+                throw new IllegalArgumentException("El pago supera el saldo pendiente de la cuota.");
+            String payments = fields[5].isBlank() ? amount.toPlainString() + "~" + paidOn + "~" + method
+                    : fields[5] + ";" + amount.toPlainString() + "~" + paidOn + "~" + method;
+            String detail = RENT_LEDGER_MARKER + "|" + operationId + "|" + fields[2] + "|" + fields[3]
+                    + "|" + fields[4] + "|" + payments;
+            BigDecimal paidTotal = rentalPaidTotal(payments);
+            String status = paidTotal.compareTo(new BigDecimal(fields[3])) >= 0 ? "Completada" : "Parcial";
+            exec(c, "UPDATE tareas_seguimiento SET detalle=?,estado=?,fecha_completada=? WHERE id_tarea=?",
+                    detail, status, status.equals("Completada") ? paidOn.atTime(23, 59) : null, taskId);
+            audit(c, actor, "Pago de alquiler registrado", "tareas_seguimiento", taskId,
+                    fields[2] + " · " + method + " · " + amount + " " + fields[4] + " · operación #" + operationId);
+            return null;
+        });
+    }
+
+    private Registro rentalForAccess(int operationId) {
+        int actor = require(1, 2);
+        Registro rental = alquileresActivos().stream()
+                .filter(row -> row.id("id_operacion") == operationId)
+                .findFirst().orElseThrow(() -> new IllegalArgumentException("El alquiler no está activo o no pertenece a tu cartera."));
+        if (role() == 2 && !clientAccessible(actor, rental.id("id_cliente")))
+            throw new IllegalArgumentException("El alquiler no pertenece a tu cartera.");
+        return rental;
+    }
+
+    private Registro rentalInstallmentRow(Registro source) {
+        String[] fields = rentalLedgerFields(source.text("detalle"));
+        BigDecimal expected = new BigDecimal(fields[3]);
+        BigDecimal paid = rentalPaidTotal(fields[5]);
+        String state = paid.compareTo(expected) >= 0 ? "Completada"
+                : paid.signum() > 0 ? "Parcial"
+                : source.text("fecha_limite").substring(0, 10).compareTo(LocalDate.now().toString()) < 0
+                        ? "Vencida" : "Pendiente";
+        Registro row = new Registro();
+        row.putAll(source);
+        row.put("periodo", fields[2]);
+        row.put("importe_esperado", expected);
+        row.put("moneda", fields[4]);
+        row.put("pagado", paid);
+        row.put("saldo", expected.subtract(paid).max(BigDecimal.ZERO));
+        row.put("estado_cuota", state);
+        if (!fields[5].isBlank()) {
+            String[] last = fields[5].split(";");
+            String[] data = last[last.length - 1].split("~", 3);
+            row.put("ultimo_pago", data[1]);
+            row.put("medio_pago", data[2]);
+        }
+        return row;
+    }
+
+    private static String[] rentalLedgerFields(String detail) {
+        String[] fields = detail.split("\\|", 6);
+        if (fields.length != 6 || !fields[0].equals(RENT_LEDGER_MARKER))
+            throw new IllegalArgumentException("El registro no es una cuota de alquiler válida.");
+        return fields;
+    }
+
+    private static BigDecimal rentalPaidTotal(String payments) {
+        if (payments.isBlank()) return BigDecimal.ZERO;
+        BigDecimal total = BigDecimal.ZERO;
+        for (String payment : payments.split(";")) {
+            String[] fields = payment.split("~", 3);
+            if (fields.length != 3) throw new IllegalArgumentException("El historial de pagos está dañado.");
+            total = total.add(new BigDecimal(fields[0]));
+        }
+        return total;
+    }
+
     private void accessClient(int client) {
         int actor = require(1, 2, 3);
         if (role() == 3 && actor != client)
@@ -1843,6 +1986,19 @@ public final class ServicioInmobiliaria {
             for (Registro row : list(c, "SELECT id_reserva FROM reservas WHERE estado='Pendiente' AND fecha_limite<=?",
                     LocalDateTime.now().plusDays(days.get("dias_aviso_reserva")))) {
                 generated += notificarAdministradoresSiNoExiste(c, "Alerta: reserva #" + row.id("id_reserva") + " próxima a vencer.");
+            }
+            String rentalScope = role() == 2 ? " AND id_agente=?" : "";
+            Object[] rentalArgs = role() == 2
+                    ? new Object[] {LocalDateTime.now().plusDays(days.get("dias_aviso_reserva")), actor}
+                    : new Object[] {LocalDateTime.now().plusDays(days.get("dias_aviso_reserva"))};
+            for (Registro row : list(c, "SELECT id_tarea,id_agente,titulo,fecha_limite FROM tareas_seguimiento "
+                    + "WHERE COALESCE(SUBSTRING(detalle,1,10),'')='NH_RENT_V1' AND estado IN ('Pendiente','Parcial') "
+                    + "AND fecha_limite<=?" + rentalScope, rentalArgs)) {
+                String status = row.text("fecha_limite").compareTo(LocalDateTime.now().toString()) < 0
+                        ? "vencida" : "próxima a vencer";
+                String message = "Alerta de alquiler: " + row.text("titulo") + " " + status + ".";
+                generated += notificarSiNoExiste(c, row.id("id_agente"), message);
+                if (role() == 1) generated += notificarAdministradoresSiNoExiste(c, message);
             }
             return generated;
         });
