@@ -5,6 +5,10 @@ import static ar.edu.nuevohogar.persistencia.dao.ConsultasSQL.*;
 import ar.edu.nuevohogar.persistencia.dao.*;
 import ar.edu.nuevohogar.backend.*;
 import ar.edu.nuevohogar.modelo.Registro;
+import ar.edu.nuevohogar.interfaz.paneles.ElementoMenuPanel;
+import ar.edu.nuevohogar.interfaz.paneles.administrador.PanelAdministrador;
+import ar.edu.nuevohogar.interfaz.paneles.agente.PanelAgente;
+import ar.edu.nuevohogar.interfaz.paneles.cliente.PanelCliente;
 
 import java.math.BigDecimal;
 import java.nio.file.*;
@@ -63,6 +67,17 @@ public final class ComprobacionesIntegracion {
     }
 
     public static void main(String[] args) throws Exception {
+        Runnable[] adminActions = new Runnable[17];
+        Arrays.setAll(adminActions, i -> () -> {});
+        Runnable[] agentActions = new Runnable[13];
+        Arrays.setAll(agentActions, i -> () -> {});
+        Runnable[] clientActions = new Runnable[9];
+        Arrays.setAll(clientActions, i -> () -> {});
+        List<List<ElementoMenuPanel>> roleMenus = List.of(
+                PanelAdministrador.menu(adminActions), PanelAgente.menu(agentActions), PanelCliente.menu(clientActions));
+        check(roleMenus.stream().flatMap(List::stream).noneMatch(item -> item.nombre().toLowerCase(Locale.ROOT).contains("catálogo")),
+                "Ningún panel de escritorio ofrece el catálogo web");
+
         Path work = Path.of("target/test-files");
         Files.createDirectories(work);
         Path localMedia = work.resolve("private").toAbsolutePath();
@@ -101,7 +116,7 @@ public final class ComprobacionesIntegracion {
         ConexionBaseDatos db =
                 new ConexionBaseDatos(
                         "jdbc:h2:mem:integration;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
-                        work.resolve("uploads"));
+                        work.resolve("uploads"), webMedia, "/Inmobiliaria/");
         db.initialize();
         db.initialize();
         ServicioInmobiliaria admin = new ServicioInmobiliaria(db),
@@ -164,11 +179,23 @@ public final class ComprobacionesIntegracion {
         Files.writeString(doc, "%PDF-1.4 test");
         client.attach(pid, doc, "Plano");
         check(client.attachments(pid, true).size() == 1, "Documento privado guardado");
+        check(Files.exists(client.attachmentPath(pid, client.attachments(pid, true).getFirst().id("id"), true))
+                        && !client.attachmentPath(pid, client.attachments(pid, true).getFirst().id("id"), true).startsWith(webMedia),
+                "Documentos privados quedan fuera de la carpeta pública de la web");
+        Path photo = work.resolve("foto.jpg");
+        Files.writeString(photo, "image test");
+        client.attach(pid, photo, "Imagen");
+        var savedPhoto = client.attachments(pid, false).getFirst();
+        check(savedPhoto.text("archivo").matches("/Inmobiliaria/archivos/propiedades/[a-f0-9]{32}\\.jpg")
+                        && Files.exists(client.attachmentPath(pid, savedPhoto.id("id"), false)),
+                "Fotos nuevas siguen el formato local que publica la web PHP");
         denied(() -> other.attachments(pid, true), "Documentación inaccesible para otro cliente");
         var tax = new ServicioInmobiliaria.PropertyTax("Municipal", new BigDecimal("100000.00"), new BigDecimal("1.25"), "ARS", "Octubre 2026");
         check(tax.amount().compareTo(new BigDecimal("1250.00")) == 0, "Impuesto calcula base por porcentaje sin errores de coma flotante");
         check(new ServicioInmobiliaria.PropertyTax("Redondeo", new BigDecimal("1.00"), new BigDecimal("0.5"), "ARS", "Prueba").amount().compareTo(new BigDecimal("0.01")) == 0, "Impuesto redondea centavos de forma consistente");
         denied(() -> new ServicioInmobiliaria.PropertyTax("Inválido", BigDecimal.ONE, new BigDecimal("101"), "ARS", "Prueba"), "Rechaza tasas superiores a 100");
+        denied(() -> new ServicioInmobiliaria.PropertyTax("Precisión", BigDecimal.ONE, new BigDecimal("1.234"), "ARS", "Prueba"),
+                "El porcentaje respeta los dos decimales de la base web");
         denied(() -> new ServicioInmobiliaria.PropertyTax("Inválido", new BigDecimal("-1"), BigDecimal.ONE, "ARS", "Prueba"), "Rechaza base negativa");
         client.savePropertyTax(pid, tax);
         check(admin.propertyTaxes(pid).size() == 1, "Administración consulta el cálculo guardado antes de publicar");
@@ -266,6 +293,10 @@ public final class ComprobacionesIntegracion {
         check(admin.reservasComerciales().stream().anyMatch(r -> r.id("id_reserva") == reservationId && r.text("estado").equals("Pendiente")),
                 "La reserva llega al panel de administración para su autorización");
         admin.resolverReserva(reservationId, true);
+        admin.actualizarReserva(reservationId, null, "Pagado");
+        check(client.reservasComerciales().stream().anyMatch(r -> r.id("id_reserva") == reservationId
+                        && r.text("estado_pago").equals("Pagado")),
+                "El pago actualizado aparece en la cuenta del cliente");
         check(client.reservasComerciales().stream().anyMatch(r -> r.id("id_reserva") == reservationId && r.text("estado").equals("Aprobada"))
                         && admin.property(pid).id("id_estado_comercial") == 2,
                 "La aprobación administrativa reserva la propiedad y se registra en el historial");
@@ -364,6 +395,76 @@ public final class ComprobacionesIntegracion {
         check(
                 !admin.activity().isEmpty() && !client.notifications().isEmpty(),
                 "Auditoría y notificaciones generadas");
+        Map<String, String> ownerRequestData = new HashMap<>(property(cid));
+        ownerRequestData.put("titulo", "Propuesta para el flujo web");
+        List<ServicioInmobiliaria.Offer> proposedOffers = List.of(
+                new ServicioInmobiliaria.Offer(1, new BigDecimal("275000"), "USD"),
+                new ServicioInmobiliaria.Offer(2, new BigDecimal("900000"), "ARS"));
+        int ownerRequest = client.createOwnerRequest(ownerRequestData, proposedOffers, Set.of(1),
+                true, true, "Se adjuntara documentacion adicional.");
+        check(client.ownerRequests().stream().anyMatch(r -> r.id("id_solicitud") == ownerRequest),
+                "El cliente ve la propuesta de publicacion de su inmueble");
+        check(agent.ownerRequests().stream().anyMatch(r -> r.id("id_solicitud") == ownerRequest),
+                "El agente ve solicitudes de propietarios sin asignar");
+        client.attachOwnerRequest(ownerRequest, doc, "Plano");
+        check(Files.exists(client.ownerRequestFilePath(ownerRequest,
+                        client.ownerRequestDocuments(ownerRequest).getFirst().id("id"), true))
+                        && !client.ownerRequestFilePath(ownerRequest,
+                                client.ownerRequestDocuments(ownerRequest).getFirst().id("id"), true).startsWith(webMedia),
+                "Documentación de solicitudes permanece privada con carpeta web configurada");
+        client.attachOwnerRequest(ownerRequest, photo, "Imagen");
+        var requestedPhoto = client.ownerRequestMedia(ownerRequest).getFirst();
+        check(requestedPhoto.text("archivo").matches("/Inmobiliaria/archivos/solicitudes/[a-f0-9]{32}\\.jpg")
+                        && Files.exists(client.ownerRequestFilePath(ownerRequest, requestedPhoto.id("id"), false)),
+                "Fotos de solicitudes usan la carpeta compartida con la web PHP");
+        client.saveOwnerRequestTax(ownerRequest, tax);
+        agent.claimOwnerRequest(ownerRequest);
+        check(agent.ownerRequest(ownerRequest).id("id_agente") == aid,
+                "El agente puede tomar una solicitud pendiente");
+        int approvedOwnerProperty = admin.approveOwnerRequest(ownerRequest);
+        check(admin.property(approvedOwnerProperty).id("id_estado_verificacion") == 3
+                        && admin.offers(approvedOwnerProperty).size() == 2,
+                "La aprobacion crea y publica la propiedad con sus operaciones");
+        check(admin.attachments(approvedOwnerProperty, true).size() == 1
+                        && admin.propertyTaxes(approvedOwnerProperty).size() == 1,
+                "La documentacion e impuestos de la solicitud pasan a la propiedad");
+        int rejectedOwnerRequest = client.createOwnerRequest(ownerRequestData, proposedOffers, Set.of(),
+                true, true, "");
+        admin.rejectOwnerRequest(rejectedOwnerRequest, "Falta verificar la titularidad.");
+        check(client.ownerRequests().stream().anyMatch(r -> r.id("id_solicitud") == rejectedOwnerRequest
+                        && r.id("id_estado_verificacion") == 4),
+                "El rechazo de una propuesta conserva el motivo y estado");
+
+        client.createInquiry(approvedOwnerProperty, cid, "", "", "",
+                "Quisiera coordinar una visita para conocer la propiedad.");
+        Registro inquiry = agent.consultations().getFirst();
+        check(inquiry.text("persona").contains("Cliente")
+                        && admin.consultations().stream().anyMatch(r -> r.id("id_contacto") == inquiry.id("id_contacto")),
+                "Las consultas se comparten entre el agente responsable y administracion");
+        agent.respondInquiry(inquiry.id("id_contacto"), "Te contactaremos para coordinar la visita.", "Respondida");
+        check(admin.consultations().stream().anyMatch(r -> r.id("id_contacto") == inquiry.id("id_contacto")
+                        && r.text("estado").equals("Respondida")),
+                "La respuesta de la consulta queda guardada con su estado");
+
+        List<ServicioInmobiliaria.Offer> minimumPriceOffer = List.of(
+                new ServicioInmobiliaria.Offer(1, new BigDecimal("250000"), "USD", new BigDecimal("230000")));
+        Map<String, String> internalProperty = new HashMap<>(property(cid));
+        internalProperty.put("titulo", "Propiedad con minimo interno");
+        int minimumProperty = agent.saveProperty(null, internalProperty, minimumPriceOffer, Set.of(), false);
+        check(agent.offers(minimumProperty).getFirst().money("precio_minimo")
+                        .compareTo(new BigDecimal("230000")) == 0,
+                "El agente guarda el precio minimo interno de venta");
+        denied(() -> agent.saveProperty(null, internalProperty,
+                        List.of(new ServicioInmobiliaria.Offer(1, new BigDecimal("250000"), "USD",
+                                new BigDecimal("260000"))), Set.of(), false),
+                "El minimo interno no puede superar el precio publicado");
+
+        int secondAgent = admin.createStaffUser(user("1005", "agente2@test.local"), password, 2);
+        admin.saveClient(cid, Set.of(), secondAgent);
+        check(admin.linkedAgents(cid).stream().mapToInt(r -> r.id("id")).distinct().count() >= 2
+                        && admin.clientsForAgent(aid).stream().anyMatch(r -> r.id("id") == cid)
+                        && admin.clientsForAgent(secondAgent).stream().anyMatch(r -> r.id("id") == cid),
+                "La ficha conserva los agentes vinculados por asignacion y actividad");
         admin.setActive(aid, false);
         denied(() -> agent.allProperties(), "Desactivación revoca sesión existente");
         denied(

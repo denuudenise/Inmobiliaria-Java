@@ -26,10 +26,9 @@ public final class ServicioInmobiliaria {
     private final PropiedadDAO propiedadDao;
     private final ClienteDAO clienteDao;
     private final SolicitudDAO solicitudDao;
+    private final SolicitudPropiedadDAO solicitudPropiedadDao;
     private final GestionComercialDAO gestionDao;
     private final MultimediaDAO multimediaDao;
-    private final CloudinaryService cloudinary;
-    private final ClienteDocumentosNube privateDocuments;
     private Integer sessionId;
     private static final String PROPERTY =
             "SELECT p.*,t.nombre AS tipo,e.nombre AS verificacion,c.nombre AS"
@@ -46,10 +45,9 @@ public final class ServicioInmobiliaria {
         propiedadDao = new PropiedadDAO(db);
         clienteDao = new ClienteDAO(db);
         solicitudDao = new SolicitudDAO(db);
+        solicitudPropiedadDao = new SolicitudPropiedadDAO(db);
         gestionDao = new GestionComercialDAO(db);
         multimediaDao = new MultimediaDAO(db);
-        cloudinary = new CloudinaryService(db);
-        privateDocuments = new ClienteDocumentosNube(db);
     }
 
     public boolean signedIn() {
@@ -75,7 +73,6 @@ public final class ServicioInmobiliaria {
 
     public void logout() {
         sessionId = null;
-        privateDocuments.cerrarSesion();
     }
 
     public void login(String email, String password) {
@@ -87,14 +84,6 @@ public final class ServicioInmobiliaria {
                                                 "Correo o contraseña incorrectos."));
         if (!ClavesSeguras.verify(password, usuario.passwordHash()))
             throw new IllegalArgumentException("Correo o contraseña incorrectos.");
-        if (privateDocuments.configured()) {
-            try {
-                privateDocuments.iniciarSesion(email, password);
-            } catch (Exception e) {
-                throw new IllegalArgumentException(
-                        "La cuenta es correcta, pero no se pudo conectar con el servicio compartido de documentos.", e);
-            }
-        }
         sessionId = usuario.idUsuario();
     }
 
@@ -308,9 +297,32 @@ public final class ServicioInmobiliaria {
         int actor = require(1, 2);
         List<Cliente> clientes =
                 role() == 2
-                        ? clienteDao.listAssignedToAgent(actor)
+                        ? clienteDao.listRelatedToAgent(actor)
                         : clienteDao.listForAdministrator();
         return clientes.stream().map(Cliente::toRow).toList();
+    }
+
+    public List<Registro> clientsForAgent(int agent) {
+        require(1);
+        if (agents().stream().noneMatch(a -> a.id("id") == agent))
+            throw new IllegalArgumentException("El agente no existe o no está activo.");
+        return clienteDao.listRelatedToAgent(agent).stream().map(Cliente::toRow).toList();
+    }
+
+    public List<Registro> linkedAgents(int client) {
+        require(1, 2);
+        accessClient(client);
+        return dao.list("SELECT DISTINCT a.id_usuario AS id,CONCAT(a.nombre,' ',a.apellido) AS etiqueta "
+                + "FROM usuarios a WHERE a.id_rol=2 AND ("
+                + "EXISTS(SELECT 1 FROM clientes c WHERE c.id_cliente=? AND c.id_agente_asignado=a.id_usuario) "
+                + "OR EXISTS(SELECT 1 FROM contactos ct WHERE ct.id_cliente=? AND ct.id_agente=a.id_usuario) "
+                + "OR EXISTS(SELECT 1 FROM visitas v WHERE v.id_cliente=? AND v.id_agente=a.id_usuario) "
+                + "OR EXISTS(SELECT 1 FROM tareas_seguimiento t WHERE t.id_cliente=? AND t.id_agente=a.id_usuario) "
+                + "OR EXISTS(SELECT 1 FROM solicitudes_publicacion s WHERE s.id_cliente=? AND s.id_agente=a.id_usuario) "
+                + "OR EXISTS(SELECT 1 FROM ofertas_cliente o WHERE o.id_cliente=? AND o.id_agente=a.id_usuario) "
+                + "OR EXISTS(SELECT 1 FROM propiedades p WHERE p.id_propietario=? AND p.id_agente_creador=a.id_usuario) "
+                + "OR EXISTS(SELECT 1 FROM intereses i JOIN propiedades p ON p.id_propiedad=i.id_propiedad WHERE i.id_cliente=? AND p.id_agente_creador=a.id_usuario) "
+                + ") ORDER BY etiqueta", client, client, client, client, client, client, client, client);
     }
 
     public List<Registro> users() {
@@ -447,7 +459,11 @@ public final class ServicioInmobiliaria {
         return p;
     }
 
-    public record Offer(int type, BigDecimal price, String currency) {}
+    public record Offer(int type, BigDecimal price, String currency, BigDecimal minimumPrice) {
+        public Offer(int type, BigDecimal price, String currency) {
+            this(type, price, currency, null);
+        }
+    }
 
     public int saveProperty(
             Integer id,
@@ -486,6 +502,11 @@ public final class ServicioInmobiliaria {
                     || !Set.of("USD", "ARS").contains(o.currency))
                 throw new IllegalArgumentException(
                         "Revisá el precio y la moneda de cada operación.");
+        for (Offer o : offers) {
+            if (o.minimumPrice() != null && (o.type() != 1 || o.minimumPrice().signum() <= 0
+                    || o.minimumPrice().scale() > 2 || o.minimumPrice().compareTo(o.price()) > 0))
+                throw new IllegalArgumentException("El mínimo de venta debe ser positivo y no superar el precio publicado.");
+        }
         Integer building =
                 optional(d, "id_edificio").isEmpty()
                         ? null
@@ -535,7 +556,7 @@ public final class ServicioInmobiliaria {
                         pid = id;
                         if (tableExists(c, "historial_precios")) {
                             int currentProperty = pid;
-                            for (Registro oldOffer : list(c, "SELECT id_tipo_transaccion,precio,moneda FROM propiedad_ofertas WHERE id_propiedad=?", currentProperty)) {
+                            for (Registro oldOffer : list(c, "SELECT id_tipo_transaccion,precio,moneda,precio_minimo FROM propiedad_ofertas WHERE id_propiedad=?", currentProperty)) {
                                 for (Offer newOffer : offers) {
                                     if (newOffer.type() == oldOffer.id("id_tipo_transaccion")
                                             && (newOffer.price().compareTo(oldOffer.money("precio")) != 0 || !newOffer.currency().equals(oldOffer.text("moneda"))))
@@ -546,6 +567,11 @@ public final class ServicioInmobiliaria {
                                             && tableExists(c, "auditoria_cambios"))
                                         exec(c, "INSERT INTO auditoria_cambios(entidad,id_registro,campo,valor_anterior,valor_nuevo,motivo) VALUES('propiedades',?,?,?, ?,?)",
                                                 currentProperty, "precio_operacion_" + newOffer.type(), oldOffer.money("precio") + " " + oldOffer.text("moneda"), newOffer.price() + " " + newOffer.currency(), "Actualización desde la ficha");
+                                    if (newOffer.type() == oldOffer.id("id_tipo_transaccion")
+                                            && !Objects.equals(oldOffer.get("precio_minimo"), newOffer.minimumPrice())
+                                            && tableExists(c, "auditoria_cambios"))
+                                        exec(c, "INSERT INTO auditoria_cambios(entidad,id_registro,campo,valor_anterior,valor_nuevo,motivo) VALUES('propiedades',?,'precio_minimo_venta',?,?,?)",
+                                                currentProperty, Objects.toString(oldOffer.get("precio_minimo"), "Sin mínimo"), Objects.toString(newOffer.minimumPrice(), "Sin mínimo"), "Actualización desde la ficha");
                                 }
                             }
                         }
@@ -562,11 +588,12 @@ public final class ServicioInmobiliaria {
                     for (Offer o : offers)
                         exec(
                                 c,
-                                "INSERT INTO propiedad_ofertas VALUES(?,?,?,?)",
+                                "INSERT INTO propiedad_ofertas(id_propiedad,id_tipo_transaccion,precio,moneda,precio_minimo) VALUES(?,?,?,?,?)",
                                 pid,
                                 o.type,
                                 o.price,
-                                o.currency);
+                                o.currency,
+                                o.minimumPrice());
                     for (int f : features)
                         exec(c, "INSERT INTO propiedad_caracteristicas VALUES(?,?)", pid, f);
                     if (list(
@@ -658,6 +685,260 @@ public final class ServicioInmobiliaria {
         return solicitudDao.listForRole(role(), actor).stream()
                 .map(SolicitudPublicacion::toRow)
                 .toList();
+    }
+
+    public List<Registro> ownerRequests() {
+        return solicitudPropiedadDao.list(role(), require(1, 2, 3));
+    }
+
+    public Registro ownerRequest(int id) {
+        Registro request = solicitudPropiedadDao.find(id);
+        requireOwnerRequestAccess(request);
+        return request;
+    }
+
+    public List<Registro> ownerRequestOffers(int id) {
+        requireOwnerRequestAccess(solicitudPropiedadDao.find(id));
+        return solicitudPropiedadDao.offers(id);
+    }
+
+    public List<Registro> ownerRequestFeatures(int id) {
+        requireOwnerRequestAccess(solicitudPropiedadDao.find(id));
+        return solicitudPropiedadDao.features(id);
+    }
+
+    public List<Registro> ownerRequestMedia(int id) {
+        requireOwnerRequestAccess(solicitudPropiedadDao.find(id));
+        return solicitudPropiedadDao.media(id);
+    }
+
+    public List<Registro> ownerRequestDocuments(int id) {
+        requireOwnerRequestAccess(solicitudPropiedadDao.find(id));
+        return solicitudPropiedadDao.documents(id);
+    }
+
+    public Path ownerRequestFilePath(int request, int fileId, boolean privateDocument) {
+        requireOwnerRequestAccess(solicitudPropiedadDao.find(request));
+        Registro file = privateDocument
+                ? dao.list("SELECT archivo FROM documentos WHERE id_documento=? AND id_solicitud=?", fileId, request)
+                        .stream().findFirst().orElseThrow(() -> new IllegalArgumentException("El documento no pertenece a la solicitud."))
+                : dao.list("SELECT url_archivo AS archivo FROM solicitud_multimedia WHERE id_multimedia=? AND id_solicitud=?", fileId, request)
+                        .stream().findFirst().orElseThrow(() -> new IllegalArgumentException("El archivo no pertenece a la solicitud."));
+        return RutasAdjuntos.resolve(db.storage, db.webMediaRoot, db.webMediaPrefix,
+                file.text("archivo"), privateDocument);
+    }
+
+    public List<Registro> ownerRequestTaxes(int id) {
+        requireOwnerRequestAccess(solicitudPropiedadDao.find(id));
+        return dao.list("SELECT i.*,i.concepto AS nombre,i.base AS base_imponible,"
+                + "CONCAT(u.nombre,' ',u.apellido) AS autor FROM propiedad_impuestos i "
+                + "JOIN usuarios u ON u.id_usuario=i.id_usuario WHERE i.id_solicitud=? ORDER BY i.id_impuesto", id);
+    }
+
+    public int createOwnerRequest(Map<String, String> d, List<Offer> offers,
+            Set<Integer> features, boolean missingPlans, boolean missingDeed, String documentNotes) {
+        int owner = require(3);
+        String title = required(d, "titulo", 200);
+        String address = required(d, "direccion", 255);
+        String city = required(d, "localidad", 100);
+        String description = required(d, "descripcion", 10000);
+        int propertyType = integer(d, "id_tipo_propiedad", 1, 1000);
+        BigDecimal surface = decimal(d, "superficie_total_m2", true);
+        if (surface.compareTo(new BigDecimal("999999.99")) > 0)
+            throw new IllegalArgumentException("La superficie total está fuera de rango.");
+        int rooms = integer(d, "ambientes", 0, 1000);
+        int bedrooms = integer(d, "dormitorios", 0, 1000);
+        int bathrooms = integer(d, "banos", 0, 1000);
+        int age = integer(d, "antiguedad_anos", 0, 1000);
+        validateOffers(offers);
+        if (documentNotes != null && documentNotes.length() > 2000)
+            throw new IllegalArgumentException("La observación documental no puede superar los 2000 caracteres.");
+        return db.transaction(c -> {
+            int id = insert(c, "INSERT INTO solicitudes_publicacion(id_cliente,id_tipo_propiedad,"
+                    + "id_tipo_transaccion,id_estado_verificacion,titulo,direccion,localidad,descripcion,"
+                    + "precio_estimado,superficie_total_m2,ambientes,dormitorios,banos,antiguedad_anos,"
+                    + "moneda,faltan_planos,falta_escritura,observaciones_documentacion) "
+                    + "VALUES(?,?,?,2,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", owner, propertyType,
+                    offers.getFirst().type(), title, address, city, description, offers.getFirst().price(),
+                    surface, rooms, bedrooms, bathrooms, age, offers.getFirst().currency(),
+                    missingPlans ? 1 : 0, missingDeed ? 1 : 0,
+                    documentNotes == null || documentNotes.isBlank() ? null : documentNotes.trim());
+            for (Offer offer : offers)
+                exec(c, "INSERT INTO solicitud_ofertas(id_solicitud,id_tipo_transaccion,precio,moneda,precio_minimo) VALUES(?,?,?,?,?)",
+                        id, offer.type(), offer.price(), offer.currency(), offer.minimumPrice());
+            for (int feature : features)
+                exec(c, "INSERT INTO solicitud_caracteristicas(id_solicitud,id_caracteristica) VALUES(?,?)", id, feature);
+            audit(c, owner, "Solicitud de publicación creada", "solicitudes_publicacion", id, title);
+            return id;
+        });
+    }
+
+    private void validateOffers(List<Offer> offers) {
+        if (offers == null || offers.isEmpty()) throw new IllegalArgumentException("Agregá al menos una operación con precio.");
+        Set<Integer> seen = new HashSet<>();
+        for (Offer offer : offers) {
+            if (!seen.add(offer.type()) || offer.price() == null || offer.price().signum() <= 0
+                    || offer.price().scale() > 2 || !Set.of("USD", "ARS").contains(offer.currency()))
+                throw new IllegalArgumentException("Revisá las operaciones, los precios y las monedas.");
+            if (offer.minimumPrice() != null && (offer.type() != 1 || offer.minimumPrice().signum() <= 0
+                    || offer.minimumPrice().scale() > 2 || offer.minimumPrice().compareTo(offer.price()) > 0))
+                throw new IllegalArgumentException("El mínimo interno debe ser positivo y no superar el precio de venta.");
+        }
+    }
+
+    private void requireOwnerRequestAccess(Registro request) {
+        int actor = require(1, 2, 3);
+        if (role() == 3 && request.id("id_cliente") != actor)
+            throw new IllegalArgumentException("La solicitud no pertenece a tu cuenta.");
+        if (role() == 2 && request.get("id_agente") != null && request.id("id_agente") != actor)
+            throw new IllegalArgumentException("La solicitud está asignada a otro agente.");
+    }
+
+    public void claimOwnerRequest(int id) {
+        int agent = require(2);
+        db.transaction(c -> {
+            Registro request = list(c, "SELECT * FROM solicitudes_publicacion WHERE id_solicitud=? FOR UPDATE", id)
+                    .stream().findFirst().orElseThrow(() -> new IllegalArgumentException("La solicitud no existe."));
+            if (request.id("id_estado_verificacion") != 2 || request.get("id_agente") != null)
+                throw new IllegalArgumentException("Solo podés tomar solicitudes pendientes y sin agente.");
+            exec(c, "UPDATE solicitudes_publicacion SET id_agente=?,fecha_actualizacion=NOW() WHERE id_solicitud=? AND id_agente IS NULL", agent, id);
+            if (tableExists(c, "historial_asignaciones"))
+                exec(c, "INSERT INTO historial_asignaciones(tipo_entidad,id_entidad,agente_anterior,agente_nuevo,id_usuario_cambio,motivo) VALUES('SOLICITUD',?,NULL,?,?,?)",
+                        id, agent, agent, "Solicitud tomada por el agente");
+            audit(c, agent, "Solicitud tomada", "solicitudes_publicacion", id, "");
+            return null;
+        });
+    }
+
+    public void assignOwnerRequest(int id, int agent) {
+        int admin = require(1);
+        if (agents().stream().noneMatch(a -> a.id("id") == agent))
+            throw new IllegalArgumentException("Elegí un agente activo.");
+        db.transaction(c -> {
+            Registro old = list(c, "SELECT id_agente,id_estado_verificacion FROM solicitudes_publicacion WHERE id_solicitud=? FOR UPDATE", id)
+                    .stream().findFirst().orElseThrow(() -> new IllegalArgumentException("La solicitud no existe."));
+            if (old.id("id_estado_verificacion") != 2)
+                throw new IllegalArgumentException("Solo se pueden asignar solicitudes pendientes.");
+            Integer previous = old.get("id_agente") == null ? null : old.id("id_agente");
+            if (!Objects.equals(previous, agent)) {
+                exec(c, "UPDATE solicitudes_publicacion SET id_agente=?,fecha_actualizacion=NOW() WHERE id_solicitud=?", agent, id);
+                if (tableExists(c, "historial_asignaciones"))
+                    exec(c, "INSERT INTO historial_asignaciones(tipo_entidad,id_entidad,agente_anterior,agente_nuevo,id_usuario_cambio,motivo) VALUES('SOLICITUD',?,?,?,?,?)",
+                            id, previous, agent, admin, "Asignación administrativa de solicitud");
+                audit(c, admin, "Agente asignado a solicitud", "solicitudes_publicacion", id, "Agente #" + agent);
+            }
+            return null;
+        });
+    }
+
+    public void rejectOwnerRequest(int id, String reason) {
+        int admin = require(1);
+        if (reason == null || reason.isBlank() || reason.length() > 2000)
+            throw new IllegalArgumentException("Indicá un motivo de rechazo (hasta 2000 caracteres).");
+        db.transaction(c -> {
+            int updated = exec(c, "UPDATE solicitudes_publicacion SET id_estado_verificacion=4,motivo_rechazo=?,fecha_actualizacion=NOW() WHERE id_solicitud=? AND id_estado_verificacion=2",
+                    reason.trim(), id);
+            if (updated == 0) throw new IllegalArgumentException("La solicitud ya fue resuelta.");
+            Registro row = list(c, "SELECT id_cliente,titulo FROM solicitudes_publicacion WHERE id_solicitud=?", id).getFirst();
+            notify(c, row.id("id_cliente"), "Tu solicitud de publicación fue rechazada. Motivo: " + reason.trim());
+            audit(c, admin, "Solicitud de publicación rechazada", "solicitudes_publicacion", id, reason.trim());
+            return null;
+        });
+    }
+
+    public int approveOwnerRequest(int id) {
+        int admin = require(1);
+        return db.transaction(c -> {
+            Registro request = list(c, "SELECT * FROM solicitudes_publicacion WHERE id_solicitud=? FOR UPDATE", id)
+                    .stream().findFirst().orElseThrow(() -> new IllegalArgumentException("La solicitud no existe."));
+            if (request.id("id_estado_verificacion") != 2)
+                throw new IllegalArgumentException("La solicitud ya fue resuelta.");
+            if (request.get("id_agente") == null)
+                throw new IllegalArgumentException("Asigná un agente antes de aprobar la solicitud.");
+            List<Registro> offers = list(c, "SELECT * FROM solicitud_ofertas WHERE id_solicitud=? ORDER BY id_tipo_transaccion", id);
+            if (offers.isEmpty()) throw new IllegalArgumentException("La solicitud no tiene operaciones con precio.");
+            Registro main = offers.getFirst();
+            Propiedad.Datos data = new Propiedad.Datos(request.id("id_tipo_propiedad"),
+                    main.id("id_tipo_transaccion"), request.text("titulo"), request.text("direccion"),
+                    request.text("localidad"), main.money("precio"), main.text("moneda"),
+                    request.text("descripcion"), request.money("superficie_total_m2"), BigDecimal.ZERO,
+                    request.id("antiguedad_anos"), request.id("ambientes"), request.id("dormitorios"),
+                    request.id("banos"), request.id("id_agente"), request.id("id_cliente"), null, null,
+                    1, BigDecimal.ZERO, "", "", false);
+            int property = PropiedadDAO.insert(c, data);
+            exec(c, "UPDATE propiedades SET id_solicitud=?,id_estado_verificacion=3,id_estado_comercial=1,"
+                    + "id_admin_verificador=?,fecha_verificacion=NOW(),faltan_planos=?,falta_escritura=?,"
+                    + "observaciones_documentacion=? WHERE id_propiedad=?", id, admin,
+                    request.id("faltan_planos"), request.id("falta_escritura"),
+                    request.get("observaciones_documentacion"), property);
+            for (Registro offer : offers)
+                exec(c, "INSERT INTO propiedad_ofertas(id_propiedad,id_tipo_transaccion,precio,moneda,precio_minimo) VALUES(?,?,?,?,?)",
+                        property, offer.id("id_tipo_transaccion"), offer.money("precio"), offer.text("moneda"), offer.get("precio_minimo"));
+            for (Registro feature : list(c, "SELECT id_caracteristica FROM solicitud_caracteristicas WHERE id_solicitud=?", id))
+                exec(c, "INSERT INTO propiedad_caracteristicas(id_propiedad,id_caracteristica) VALUES(?,?)", property, feature.id("id_caracteristica"));
+            for (Registro media : list(c, "SELECT url_archivo,tipo FROM solicitud_multimedia WHERE id_solicitud=?", id))
+                exec(c, "INSERT INTO propiedad_multimedia(id_propiedad,url_archivo,tipo,orden) VALUES(?,?,?,1)", property, media.text("url_archivo"), media.text("tipo"));
+            exec(c, "UPDATE documentos SET id_propiedad=?,id_solicitud=NULL WHERE id_solicitud=?", property, id);
+            exec(c, "UPDATE propiedad_impuestos SET id_propiedad=?,id_solicitud=NULL WHERE id_solicitud=?", property, id);
+            exec(c, "UPDATE solicitudes_publicacion SET id_estado_verificacion=3,motivo_rechazo=NULL,fecha_actualizacion=NOW() WHERE id_solicitud=?", id);
+            notify(c, request.id("id_cliente"), "Tu propiedad fue aprobada y publicada en el catálogo: " + request.text("titulo"));
+            audit(c, admin, "Solicitud de publicación aprobada", "solicitudes_publicacion", id, "Propiedad #" + property);
+            return property;
+        });
+    }
+
+    public void attachOwnerRequest(int id, Path source, String type) throws Exception {
+        int actor = require(1, 2, 3);
+        Registro request = solicitudPropiedadDao.find(id);
+        requireOwnerRequestAccess(request);
+        if (role() == 3 && request.id("id_cliente") != actor)
+            throw new IllegalArgumentException("La solicitud no pertenece a tu cuenta.");
+        if (request.id("id_estado_verificacion") != 2)
+            throw new IllegalArgumentException("Solo se adjuntan archivos a solicitudes pendientes.");
+        String name = source.getFileName().toString();
+        String ext = name.contains(".") ? name.substring(name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT) : "";
+        boolean media = type.equals("Imagen") || type.equals("Video");
+        Set<String> allowed = type.equals("Imagen") ? Set.of("jpg", "jpeg", "png", "webp")
+                : type.equals("Video") ? Set.of("mp4") : Set.of("pdf", "jpg", "jpeg", "png", "webp");
+        if (!allowed.contains(ext)) throw new IllegalArgumentException("Formato no admitido para " + type + ".");
+        if (!Files.isRegularFile(source) || Files.size(source) == 0 || Files.size(source) > 50L * 1024 * 1024)
+            throw new IllegalArgumentException("El archivo debe existir y pesar menos de 50 MB.");
+        Path folder = media && db.webMediaRoot != null
+                ? db.webMediaRoot.resolve("archivos").resolve("solicitudes")
+                : db.storage.resolve("solicitudes").resolve(Integer.toString(id));
+        Files.createDirectories(folder);
+        String filename = UUID.randomUUID().toString().replace("-", "") + "." + ext;
+        Path destination = folder.resolve(filename);
+        Files.copy(source, destination);
+        String stored = media && db.webMediaRoot != null
+                ? db.webMediaPrefix + "archivos/solicitudes/" + filename
+                : db.storage.relativize(destination).toString().replace('\\', '/');
+        try {
+            db.transaction(c -> {
+                if (media) exec(c, "INSERT INTO solicitud_multimedia(id_solicitud,url_archivo,tipo) VALUES(?,?,?)", id, stored, type);
+                else exec(c, "INSERT INTO documentos(id_propiedad,id_solicitud,tipo,nombre,archivo,id_usuario) VALUES(NULL,?,?,?,?,?)",
+                        id, type, name, stored, actor);
+                audit(c, actor, "Archivo adjunto a solicitud", "solicitudes_publicacion", id, type + ": " + name);
+                return null;
+            });
+        } catch (Exception e) {
+            Files.deleteIfExists(destination);
+            throw e;
+        }
+    }
+
+    public void saveOwnerRequestTax(int id, PropertyTax tax) {
+        int actor = require(3);
+        Registro request = solicitudPropiedadDao.find(id);
+        requireOwnerRequestAccess(request);
+        if (request.id("id_estado_verificacion") != 2) throw new IllegalArgumentException("La solicitud ya fue resuelta.");
+        Objects.requireNonNull(tax);
+        db.transaction(c -> {
+            int taxId = insert(c, "INSERT INTO propiedad_impuestos(id_propiedad,id_solicitud,concepto,base,porcentaje,importe,moneda,periodo,id_usuario) VALUES(NULL,?,?,?,?,?,?,?,?)",
+                    id, tax.name(), tax.base(), tax.rate(), tax.amount(), tax.currency(), tax.period(), actor);
+            audit(c, actor, "Impuesto adjuntado a solicitud", "solicitudes_publicacion", id, tax.name() + " · " + tax.currency() + " " + tax.amount());
+            return taxId;
+        });
     }
 
     public List<Registro> checklistPublicacion(int propertyId) {
@@ -881,20 +1162,101 @@ public final class ServicioInmobiliaria {
         int actor = require(1, 2, 3);
         if (role() == 3 && actor != client)
             throw new IllegalArgumentException("Solo podés acceder a tu ficha.");
-        List<Registro> ficha = dao.list("SELECT * FROM clientes WHERE id_cliente=?", client);
-        if (ficha.isEmpty())
+        if (dao.list("SELECT id_cliente FROM clientes WHERE id_cliente=?", client).isEmpty())
             throw new IllegalArgumentException("Ficha de cliente inexistente.");
-        if (role() == 2 && ficha.getFirst().id("id_agente_asignado") != actor)
-            throw new IllegalArgumentException("Este cliente no está asignado a tu cartera.");
+        if (role() == 2 && !clientAccessible(actor, client))
+            throw new IllegalArgumentException("Este cliente no tiene actividad vinculada a tu cartera.");
     }
 
     public List<Registro> contacts(int client) {
         accessClient(client);
         return dao.list(
-                "SELECT c.*,CONCAT(u.nombre,' ',u.apellido) AS agente FROM contactos c JOIN"
-                    + " usuarios u ON u.id_usuario=c.id_agente WHERE id_cliente=? ORDER BY fecha"
+                "SELECT c.*,CONCAT(a.nombre,' ',a.apellido) AS agente FROM contactos c JOIN"
+                    + " usuarios a ON a.id_usuario=c.id_agente WHERE c.id_cliente=? ORDER BY c.fecha"
                     + " DESC",
                 client);
+    }
+
+    public void createInquiry(int propertyId, Integer clientId, String name, String email,
+            String phone, String message) {
+        if (message == null || message.trim().length() < 5 || message.trim().length() > 5000)
+            throw new IllegalArgumentException("Escribí una consulta de entre 5 y 5000 caracteres.");
+        Registro p = property(propertyId);
+        if (p.id("id_estado_verificacion") != 3 || !Set.of(1, 2).contains(p.id("id_estado_comercial")))
+            throw new IllegalArgumentException("Solo se reciben consultas sobre propiedades publicadas.");
+        int agent = responsibleAgent(p);
+        if (agent <= 0 && p.get("id_propietario") != null) {
+            Registro assignment = dao.list("SELECT id_agente_asignado AS id FROM clientes WHERE id_cliente=?",
+                    p.id("id_propietario")).stream().findFirst().orElse(new Registro());
+            if (assignment.get("id") != null) agent = assignment.id("id");
+        }
+        if (agent <= 0) throw new IllegalArgumentException("La propiedad todavía no tiene un agente responsable.");
+        final int responsibleAgent = agent;
+        String contactName = Objects.toString(name, "").trim();
+        String contactEmail = Objects.toString(email, "").trim();
+        String contactPhone = Objects.toString(phone, "").trim();
+        if (clientId == null && (contactName.isBlank() || contactName.length() > 120
+                || (contactEmail.isBlank() && contactPhone.isBlank())))
+            throw new IllegalArgumentException("Ingresá tu nombre y un correo o teléfono para que podamos responderte.");
+        if (contactEmail.length() > 190 || contactPhone.length() > 40)
+            throw new IllegalArgumentException("El correo o teléfono supera el largo permitido.");
+        if (clientId != null) {
+            int user = require(3);
+            if (user != clientId) throw new IllegalArgumentException("La consulta no pertenece a la cuenta activa.");
+        }
+        db.transaction(c -> {
+            int id = insert(c, "INSERT INTO contactos(id_cliente,id_agente,id_propiedad,tipo,descripcion,"
+                    + "nombre_contacto,email_contacto,telefono_contacto,estado) VALUES(?,?,?,'Consulta',?,?,?,?, 'Pendiente')",
+                    clientId, responsibleAgent, propertyId, message.trim(),
+                    clientId == null ? contactName : null, clientId == null ? contactEmail : null,
+                    clientId == null ? contactPhone : null);
+            notify(c, responsibleAgent, "Nueva consulta sobre la propiedad " + p.text("titulo") + ".");
+            if (clientId != null) audit(c, clientId, "Consulta enviada", "contactos", id, p.text("titulo"));
+            return null;
+        });
+    }
+
+    private int responsibleAgent(Registro property) {
+        int agent = property.id("id_agente_creador");
+        if (agent <= 0 && property.get("id_propietario") != null) {
+            Registro assignment = dao.list(
+                    "SELECT id_agente_asignado AS id FROM clientes WHERE id_cliente=?",
+                    property.id("id_propietario")).stream().findFirst().orElse(new Registro());
+            if (assignment.get("id") != null) agent = assignment.id("id");
+        }
+        if (agent <= 0)
+            throw new IllegalArgumentException("La propiedad todavía no tiene un agente responsable.");
+        return agent;
+    }
+
+    public List<Registro> consultations() {
+        int actor = require(1, 2);
+        return dao.list("SELECT c.*,p.titulo AS propiedad,COALESCE(NULLIF(CONCAT(u.nombre,' ',u.apellido),' '),"
+                + "c.nombre_contacto,'Consulta sin nombre') AS persona,COALESCE(u.email,c.email_contacto) AS correo,"
+                + "COALESCE(u.telefono,c.telefono_contacto) AS telefono,CONCAT(a.nombre,' ',a.apellido) AS agente "
+                + "FROM contactos c LEFT JOIN usuarios u ON u.id_usuario=c.id_cliente "
+                + "JOIN usuarios a ON a.id_usuario=c.id_agente LEFT JOIN propiedades p ON p.id_propiedad=c.id_propiedad "
+                + "WHERE c.tipo='Consulta' " + (role() == 2 ? "AND (c.id_agente=? OR p.id_agente_creador=?) " : "")
+                + "ORDER BY CASE WHEN c.estado='Pendiente' THEN 0 ELSE 1 END,c.fecha DESC",
+                role() == 2 ? new Object[] {actor, actor} : new Object[] {});
+    }
+
+    public void respondInquiry(int id, String response, String state) {
+        int actor = require(1, 2);
+        String answer = Objects.toString(response, "").trim();
+        if (answer.length() < 5 || answer.length() > 5000)
+            throw new IllegalArgumentException("La respuesta debe tener entre 5 y 5000 caracteres.");
+        if (!Set.of("Respondida", "Cerrada").contains(state))
+            throw new IllegalArgumentException("Elegí Respondida o Cerrada.");
+        db.transaction(c -> {
+            Registro inquiry = list(c, "SELECT * FROM contactos WHERE id_contacto=? AND tipo='Consulta' FOR UPDATE", id)
+                    .stream().findFirst().orElseThrow(() -> new IllegalArgumentException("La consulta no existe."));
+            if (role() == 2 && inquiry.id("id_agente") != actor)
+                throw new IllegalArgumentException("La consulta no está asignada a tu usuario.");
+            exec(c, "UPDATE contactos SET resultado=?,estado=?,fecha_respuesta=NOW() WHERE id_contacto=?", answer, state, id);
+            audit(c, actor, state.equals("Cerrada") ? "Cerrar consulta" : "Responder consulta", "contactos", id, answer);
+            return null;
+        });
     }
 
     public void contact(
@@ -988,8 +1350,16 @@ public final class ServicioInmobiliaria {
         accessClient(client);
         if (!Set.of("Comprador", "Vendedor", "Propietario", "Inquilino", "Inversor")
                 .containsAll(roles)) throw new IllegalArgumentException("Rol comercial inválido");
-        if (role() == 1 && agent != null && agents().stream().noneMatch(r -> r.id("id") == agent))
-            throw new IllegalArgumentException("Agente inválido");
+        if (role() == 1 && agent != null) {
+            Integer currentAgent = dao.list(
+                            "SELECT id_agente_asignado AS id FROM clientes WHERE id_cliente=?", client)
+                    .stream().findFirst()
+                    .map(row -> row.get("id") == null ? null : row.id("id"))
+                    .orElse(null);
+            if (!Objects.equals(currentAgent, agent)
+                    && agents().stream().noneMatch(r -> r.id("id") == agent))
+                throw new IllegalArgumentException("Elegí un agente activo para la nueva asignación.");
+        }
         db.transaction(
                 c -> {
                     if (role() == 1) {
@@ -1221,6 +1591,42 @@ public final class ServicioInmobiliaria {
                 role() == 2 ? new Object[] {actor} : new Object[] {});
     }
 
+    public List<Registro> activityChanges() {
+        require(1);
+        return dao.list("SELECT ch.*,a.fecha,CONCAT(u.nombre,' ',u.apellido) AS usuario "
+                + "FROM auditoria_cambios ch LEFT JOIN auditoria a ON a.id_evento=ch.id_evento "
+                + "LEFT JOIN usuarios u ON u.id_usuario=a.id_usuario "
+                + "ORDER BY COALESCE(a.fecha,'1970-01-01') DESC,ch.id_cambio DESC LIMIT 200");
+    }
+
+    public List<Registro> allStateHistory() {
+        require(1);
+        return dao.list("SELECT h.*,p.titulo,CONCAT(u.nombre,' ',u.apellido) AS usuario,"
+                + "ea.nombre AS anterior,en.nombre AS nuevo FROM historial_estados h "
+                + "JOIN propiedades p ON p.id_propiedad=h.id_propiedad JOIN usuarios u ON u.id_usuario=h.id_usuario "
+                + "JOIN estados_comerciales ea ON ea.id_estado_comercial=h.estado_anterior "
+                + "JOIN estados_comerciales en ON en.id_estado_comercial=h.estado_nuevo ORDER BY h.fecha DESC LIMIT 200");
+    }
+
+    public List<Registro> allPriceHistory() {
+        require(1);
+        return dao.list("SELECT h.*,p.titulo,t.nombre AS operacion,CONCAT(u.nombre,' ',u.apellido) AS usuario "
+                + "FROM historial_precios h JOIN propiedades p ON p.id_propiedad=h.id_propiedad "
+                + "JOIN tipos_transaccion t ON t.id_tipo_transaccion=h.id_tipo_transaccion "
+                + "JOIN usuarios u ON u.id_usuario=h.id_usuario ORDER BY h.fecha DESC LIMIT 200");
+    }
+
+    public List<Registro> allAssignmentHistory() {
+        require(1);
+        return dao.list("SELECT h.*,CONCAT(actor.nombre,' ',actor.apellido) AS usuario_cambio,"
+                + "CONCAT(previous_agent.nombre,' ',previous_agent.apellido) AS agente_anterior_nombre,"
+                + "CONCAT(next_agent.nombre,' ',next_agent.apellido) AS agente_nuevo_nombre "
+                + "FROM historial_asignaciones h JOIN usuarios actor ON actor.id_usuario=h.id_usuario_cambio "
+                + "LEFT JOIN usuarios previous_agent ON previous_agent.id_usuario=h.agente_anterior "
+                + "LEFT JOIN usuarios next_agent ON next_agent.id_usuario=h.agente_nuevo "
+                + "ORDER BY h.fecha DESC LIMIT 200");
+    }
+
     public List<Registro> stateHistory(int property) {
         int actor = require(1, 2);
         if (role() == 2 && !agentCanAccessProperty(actor, property))
@@ -1242,16 +1648,14 @@ public final class ServicioInmobiliaria {
         };
     }
 
-    /** Cliente solicita una visita; el agente sale de la asignación registrada en clientes. */
+    /** La solicitud de visita se dirige al agente responsable de la propiedad. */
     public void solicitarVisita(int propertyId, LocalDateTime when, String notes) {
         int actor = require(3);
         if (when == null || !when.isAfter(LocalDateTime.now()))
             throw new IllegalArgumentException("Elegí una fecha y hora futuras.");
         Registro p = property(propertyId);
-        Registro assignment = dao.one("SELECT id_agente_asignado FROM clientes WHERE id_cliente=?", actor);
-        if (assignment.get("id_agente_asignado") == null)
-            throw new IllegalArgumentException("Todavía no tenés un agente asignado para coordinar la visita.");
-        int agent = assignment.id("id_agente_asignado");
+        int agent = responsibleAgent(p);
+        if (agent <= 0) throw new IllegalArgumentException("La propiedad todavía no tiene un agente responsable.");
         if (p.id("id_estado_verificacion") != 3 || !Set.of(1, 2).contains(p.id("id_estado_comercial")))
             throw new IllegalArgumentException("Solo se pueden visitar propiedades publicadas y disponibles.");
         final int client = actor;
@@ -1265,12 +1669,18 @@ public final class ServicioInmobiliaria {
 
     /** El agente asignado coordina una visita con su cliente. */
     public void agendarVisita(int clientId, int propertyId, LocalDateTime when, String notes) {
+        agendarVisita(clientId, propertyId, role() == 1 ? 0 : current().id("id_usuario"), when, notes);
+    }
+
+    public void agendarVisita(int clientId, int propertyId, int requestedAgent, LocalDateTime when, String notes) {
         int agentId = require(1, 2);
         if (role() == 2 && !clientAccessible(agentId, clientId))
             throw new IllegalArgumentException("Ese cliente no pertenece a tu cartera.");
         if (when == null || !when.isAfter(LocalDateTime.now())) throw new IllegalArgumentException("Elegí una fecha y hora futuras.");
         property(propertyId);
-        int assigned = role() == 1 ? assignedAgent(clientId) : agentId;
+        int assigned = role() == 1 ? requestedAgent : agentId;
+        if (assigned <= 0 || (role() == 1 && agents().stream().noneMatch(a -> a.id("id") == assigned)))
+            throw new IllegalArgumentException("Elegí un agente activo para la visita.");
         db.transaction(c -> {
             gestionDao.crearVisita(c, propertyId, clientId, assigned, when, notes == null ? "" : notes.trim());
             notify(c, clientId, "Tu agente coordinó una visita para la propiedad #" + propertyId + ".");
@@ -1297,11 +1707,18 @@ public final class ServicioInmobiliaria {
     }
 
     public int crearTareaSeguimiento(int client, Integer property, String title, String detail, LocalDateTime due) {
+        return crearTareaSeguimiento(client, property, role() == 1 ? 0 : current().id("id_usuario"), title, detail, due);
+    }
+
+    public int crearTareaSeguimiento(int client, Integer property, int requestedAgent, String title, String detail, LocalDateTime due) {
         int actor = require(1, 2);
         if (role() == 2 && !clientAccessible(actor, client)) throw new IllegalArgumentException("Ese cliente no pertenece a tu cartera.");
         if (due == null || title == null || title.isBlank()) throw new IllegalArgumentException("Completá el título y el vencimiento del recordatorio.");
+        int taskAgent = role() == 1 ? requestedAgent : actor;
+        if (taskAgent <= 0 || (role() == 1 && agents().stream().noneMatch(a -> a.id("id") == taskAgent)))
+            throw new IllegalArgumentException("Elegí un agente activo para el recordatorio.");
         return db.transaction(c -> {
-            int id = gestionDao.crearTarea(c, role() == 1 ? assignedAgent(client) : actor, client, property, title.trim(), detail == null ? "" : detail.trim(), due);
+            int id = gestionDao.crearTarea(c, taskAgent, client, property, title.trim(), detail == null ? "" : detail.trim(), due);
             audit(c, actor, "Recordatorio creado", "tareas_seguimiento", id, title.trim());
             return id;
         });
@@ -1316,14 +1733,16 @@ public final class ServicioInmobiliaria {
         });
     }
 
-    private int assignedAgent(int client) {
-        Registro row = dao.one("SELECT id_agente_asignado FROM clientes WHERE id_cliente=?", client);
-        if (row.get("id_agente_asignado") == null) throw new IllegalArgumentException("El cliente no tiene un agente asignado.");
-        return row.id("id_agente_asignado");
-    }
-
     private boolean clientAccessible(int agent, int client) {
-        return !dao.list("SELECT id_cliente FROM clientes WHERE id_cliente=? AND id_agente_asignado=?", client, agent).isEmpty();
+        return !dao.list("SELECT c.id_cliente FROM clientes c WHERE c.id_cliente=? AND (c.id_agente_asignado=? "
+                + "OR EXISTS(SELECT 1 FROM contactos ct WHERE ct.id_cliente=c.id_cliente AND ct.id_agente=?) "
+                + "OR EXISTS(SELECT 1 FROM visitas v WHERE v.id_cliente=c.id_cliente AND v.id_agente=?) "
+                + "OR EXISTS(SELECT 1 FROM tareas_seguimiento t WHERE t.id_cliente=c.id_cliente AND t.id_agente=?) "
+                + "OR EXISTS(SELECT 1 FROM solicitudes_publicacion s WHERE s.id_cliente=c.id_cliente AND s.id_agente=?) "
+                + "OR EXISTS(SELECT 1 FROM ofertas_cliente o WHERE o.id_cliente=c.id_cliente AND o.id_agente=?) "
+                + "OR EXISTS(SELECT 1 FROM propiedades p WHERE p.id_propietario=c.id_cliente AND p.id_agente_creador=?) "
+                + "OR EXISTS(SELECT 1 FROM intereses i JOIN propiedades p ON p.id_propiedad=i.id_propiedad WHERE i.id_cliente=c.id_cliente AND p.id_agente_creador=?))",
+                client, agent, agent, agent, agent, agent, agent, agent, agent).isEmpty();
     }
 
     public List<Registro> historialPrecios(int propertyId) {
@@ -1458,7 +1877,8 @@ public final class ServicioInmobiliaria {
             throw new IllegalArgumentException("Solo se puede ofertar por propiedades publicadas y disponibles.");
         Registro listing = dao.one("SELECT precio,moneda FROM propiedad_ofertas WHERE id_propiedad=? AND id_tipo_transaccion=?", propertyId, operation);
         if (!listing.text("moneda").equals(currency)) throw new IllegalArgumentException("La oferta debe usar la moneda publicada para esta operación.");
-        int agent = assignedAgent(client);
+        int agent = responsibleAgent(p);
+        if (agent <= 0) throw new IllegalArgumentException("La propiedad todavía no tiene un agente responsable.");
         if (expiration != null && expiration.isBefore(LocalDate.now())) throw new IllegalArgumentException("La fecha de vencimiento no puede estar en el pasado.");
         return db.transaction(c -> {
             int id = gestionDao.crearOferta(c, propertyId, client, agent, operation, amount, currency, expiration, notes == null ? "" : notes.trim());
@@ -1506,26 +1926,62 @@ public final class ServicioInmobiliaria {
     }
 
     public void resolverReserva(int reservationId, boolean approve) {
+        actualizarReserva(reservationId, approve ? "autorizar" : "cancelar", null);
+    }
+
+    public void actualizarReserva(int reservationId, String action, String payment) {
         int actor = require(1);
         db.transaction(c -> {
             Registro reservation = list(c, "SELECT * FROM reservas WHERE id_reserva=? FOR UPDATE", reservationId)
                     .stream().findFirst().orElseThrow(() -> new IllegalArgumentException("La reserva no existe."));
-            String status = approve ? "Aprobada" : "Rechazada";
-            if (gestionDao.resolverReserva(c, reservationId, actor, status) == 0)
-                throw new IllegalArgumentException("La reserva ya fue revisada.");
-            if (approve) {
+            if (payment != null) {
+                if (!Set.of("Pendiente", "Pagado", "Rechazado").contains(payment))
+                    throw new IllegalArgumentException("Estado de pago inválido.");
+                exec(c, "UPDATE reservas SET estado_pago=? WHERE id_reserva=?", payment, reservationId);
+                audit(c, actor, "Actualizar pago de reserva", "reservas", reservationId, payment);
+            }
+            if (action != null && !action.isBlank()) {
+                if (!Set.of("autorizar", "cancelar").contains(action))
+                    throw new IllegalArgumentException("Acción de reserva inválida.");
                 int propertyId = reservation.id("id_propiedad");
+                String currentStatus = reservation.text("estado");
+                if (action.equals("autorizar") && !currentStatus.equals("Pendiente"))
+                    throw new IllegalArgumentException("Solo se pueden autorizar reservas pendientes.");
+                if (action.equals("cancelar") && !Set.of("Pendiente", "Activa", "Aprobada").contains(currentStatus))
+                    throw new IllegalArgumentException("La reserva no se puede cancelar desde su estado actual.");
                 Registro before = list(c, "SELECT id_estado_comercial FROM propiedades WHERE id_propiedad=? FOR UPDATE", propertyId)
                         .stream().findFirst().orElseThrow(() -> new IllegalArgumentException("La propiedad no existe."));
-                int changed = exec(c, "UPDATE propiedades SET id_estado_comercial=2 WHERE id_propiedad=? AND id_estado_comercial=1",
-                        propertyId);
-                if (changed == 0) throw new IllegalArgumentException("La propiedad ya no está disponible; no se puede aprobar esta reserva.");
-                exec(c, "INSERT INTO historial_estados(id_propiedad,id_usuario,estado_anterior,estado_nuevo,motivo) VALUES(?,?,?,?,?)",
-                        propertyId, actor, before.id("id_estado_comercial"), 2, "Reserva aprobada #" + reservationId);
-                notify(c, reservation.id("id_agente"), "La reserva #" + reservationId + " fue aprobada por administración.");
+                if (action.equals("autorizar")) {
+                    if (!Set.of(1, 2, 5).contains(before.id("id_estado_comercial")))
+                        throw new IllegalArgumentException("La propiedad no admite reservas en su estado actual.");
+                    if (!list(c, "SELECT id_reserva FROM reservas WHERE id_propiedad=? AND estado IN ('Activa','Aprobada') AND id_reserva<>? LIMIT 1",
+                            propertyId, reservationId).isEmpty())
+                        throw new IllegalArgumentException("La propiedad ya tiene otra reserva activa.");
+                    exec(c, "UPDATE reservas SET estado='Aprobada',id_autorizador=? WHERE id_reserva=?", actor, reservationId);
+                    if (before.id("id_estado_comercial") != 2) {
+                        exec(c, "UPDATE propiedades SET id_estado_comercial=2 WHERE id_propiedad=?", propertyId);
+                        exec(c, "INSERT INTO historial_estados(id_propiedad,id_usuario,estado_anterior,estado_nuevo,motivo) VALUES(?,?,?,?,?)",
+                                propertyId, actor, before.id("id_estado_comercial"), 2, "Reserva autorizada #" + reservationId);
+                    }
+                    notify(c, reservation.id("id_agente"), "La reserva #" + reservationId + " fue autorizada por administración.");
+                } else {
+                    exec(c, "UPDATE reservas SET estado='Cancelada',id_autorizador=? WHERE id_reserva=?", actor, reservationId);
+                    if (currentStatus.equals("Activa") || currentStatus.equals("Aprobada")) {
+                        boolean otherActive = !list(c, "SELECT id_reserva FROM reservas WHERE id_propiedad=? AND estado IN ('Activa','Aprobada') AND id_reserva<>? LIMIT 1",
+                                propertyId, reservationId).isEmpty();
+                        if (!otherActive && before.id("id_estado_comercial") == 2) {
+                            exec(c, "UPDATE propiedades SET id_estado_comercial=1 WHERE id_propiedad=?", propertyId);
+                            exec(c, "INSERT INTO historial_estados(id_propiedad,id_usuario,estado_anterior,estado_nuevo,motivo) VALUES(?,?,?,?,?)",
+                                    propertyId, actor, 2, 1, "Reserva cancelada #" + reservationId);
+                        }
+                    }
+                }
+                audit(c, actor, action.equals("autorizar") ? "Autorizar reserva" : "Cancelar reserva", "reservas", reservationId,
+                        currentStatus + " → " + (action.equals("autorizar") ? "Activa" : "Cancelada"));
+                notify(c, reservation.id("id_cliente"), action.equals("autorizar")
+                        ? "Tu reserva #" + reservationId + " fue autorizada."
+                        : "Tu reserva #" + reservationId + " fue cancelada.");
             }
-            notify(c, reservation.id("id_cliente"), "Tu solicitud de reserva #" + reservationId + " fue " + status.toLowerCase(Locale.ROOT) + ".");
-            audit(c, actor, "Reserva revisada", "reservas", reservationId, status);
             return null;
         });
     }
@@ -1537,8 +1993,8 @@ public final class ServicioInmobiliaria {
                 throw new IllegalArgumentException("Completá el impuesto y el período (máximo 120 y 80 caracteres).");
             if (base == null || base.signum() < 0 || base.scale() > 2 || base.compareTo(new BigDecimal("9999999999.99")) > 0)
                 throw new IllegalArgumentException("La base debe ser positiva o cero, con hasta dos decimales.");
-            if (rate == null || rate.signum() < 0 || rate.compareTo(new BigDecimal("100")) > 0 || rate.scale() > 4)
-                throw new IllegalArgumentException("El porcentaje debe estar entre 0 y 100, con hasta cuatro decimales.");
+            if (rate == null || rate.signum() < 0 || rate.compareTo(new BigDecimal("100")) > 0 || rate.scale() > 2)
+                throw new IllegalArgumentException("El porcentaje debe estar entre 0 y 100, con hasta dos decimales.");
             if (!Set.of("ARS", "USD").contains(currency)) throw new IllegalArgumentException("Moneda inválida.");
             name = name.trim();
             period = period.trim();
@@ -1558,7 +2014,8 @@ public final class ServicioInmobiliaria {
 
     public List<Registro> propertyTaxes(int id) {
         if (!canViewPrivateProperty(id)) throw new IllegalArgumentException("El cálculo de impuestos es privado.");
-        return dao.list("SELECT i.*, CONCAT(u.nombre,' ',u.apellido) AS autor FROM impuestos_propiedad i "
+        return dao.list("SELECT i.*,i.concepto AS nombre,i.base AS base_imponible,"
+                + "CONCAT(u.nombre,' ',u.apellido) AS autor FROM propiedad_impuestos i "
                 + "JOIN usuarios u ON u.id_usuario=i.id_usuario WHERE i.id_propiedad=? ORDER BY i.id_impuesto", id);
     }
 
@@ -1570,9 +2027,9 @@ public final class ServicioInmobiliaria {
             if (!Set.of(1, 4).contains(p.id("id_estado_verificacion"))
                     && !(role() != 3 && p.id("id_estado_verificacion") == 2))
                 throw new IllegalArgumentException("Guardá la propiedad como borrador antes de modificar sus impuestos.");
-            int taxId = insert(c, "INSERT INTO impuestos_propiedad(id_propiedad,nombre,base_imponible,porcentaje,importe,moneda,periodo,id_usuario) VALUES(?,?,?,?,?,?,?,?)",
+            int taxId = insert(c, "INSERT INTO propiedad_impuestos(id_propiedad,id_solicitud,concepto,base,porcentaje,importe,moneda,periodo,id_usuario) VALUES(?,NULL,?,?,?,?,?,?,?)",
                     id, tax.name(), tax.base(), tax.rate(), tax.amount(), tax.currency(), tax.period(), actor);
-            audit(c, actor, "Cálculo de impuesto", "impuestos_propiedad", taxId,
+            audit(c, actor, "Cálculo de impuesto", "propiedad_impuestos", taxId,
                     "Propiedad #" + id + " · " + tax.name() + " · " + tax.currency() + " " + tax.amount());
             return null;
         });
@@ -1616,13 +2073,11 @@ public final class ServicioInmobiliaria {
             validateAttachmentState(current, media);
             return null;
         });
-        if (!media) {
-            privateDocuments.subirDocumento(id, type, source);
-            return;
-        }
-        String storedFile = media ? cloudinary.subir(source, type.equals("Video"))
-                : copyPrivateFile(source, ext);
-        Path destination = media ? null : db.storage.resolve(storedFile);
+        if (Files.size(source) == 0)
+            throw new IllegalArgumentException("El archivo está vacío.");
+        String storedFile = copyAttachment(id, source, ext, media);
+        Path destination = RutasAdjuntos.resolve(db.storage, db.webMediaRoot, db.webMediaPrefix,
+                storedFile, !media);
         try {
             db.transaction(
                     c -> {
@@ -1645,7 +2100,7 @@ public final class ServicioInmobiliaria {
                         return null;
                     });
         } catch (Exception e) {
-            if (destination != null) Files.deleteIfExists(destination);
+            Files.deleteIfExists(destination);
             throw e;
         }
     }
@@ -1657,34 +2112,17 @@ public final class ServicioInmobiliaria {
                     "Guardá la propiedad como borrador antes de cambiar sus archivos.");
     }
 
-    public String privateDocumentUrl(int property, int document) throws Exception {
-        if (!privateDocuments.configured())
-            throw new IllegalStateException("Configurá private_media.api_url para abrir documentos compartidos.");
-        if (!canViewPrivateProperty(property))
-            throw new IllegalArgumentException("No tenés permiso para ver documentos de esta propiedad.");
-        return privateDocuments.urlDocumento(property, document);
-    }
-
-    public boolean privateDocumentsConfigured() { return privateDocuments.configured(); }
-
-    public void migratePrivateDocument(int property, int document, Path source) throws Exception {
-        if (!privateDocuments.configured())
-            throw new IllegalStateException("Configurá primero el servicio compartido de documentos.");
-        if (!canViewPrivateProperty(property))
-            throw new IllegalArgumentException("No tenés permiso para migrar documentos de esta propiedad.");
-        if (attachments(property, true).stream().noneMatch(row -> row.id("id") == document))
-            throw new IllegalArgumentException("El documento ya no existe.");
-        String filename = source.getFileName().toString();
-        String type = attachments(property, true).stream().filter(row -> row.id("id") == document)
-                .findFirst().orElseThrow().text("tipo");
-        privateDocuments.subirDocumento(property, type, source, document);
-    }
-
-    private String copyPrivateFile(Path source, String ext) throws Exception {
-        Files.createDirectories(db.storage);
-        String filename = UUID.randomUUID() + "." + ext;
-        Files.copy(source, db.storage.resolve(filename));
-        return filename;
+    private String copyAttachment(int property, Path source, String ext, boolean publicMedia) throws Exception {
+        Path folder = publicMedia && db.webMediaRoot != null
+                ? db.webMediaRoot.resolve("archivos").resolve("propiedades")
+                : db.storage.resolve("propiedades").resolve(Integer.toString(property));
+        Files.createDirectories(folder);
+        String filename = UUID.randomUUID().toString().replace("-", "") + "." + ext;
+        Path destination = folder.resolve(filename);
+        Files.copy(source, destination);
+        return publicMedia && db.webMediaRoot != null
+                ? db.webMediaPrefix + "archivos/propiedades/" + filename
+                : db.storage.relativize(destination).toString().replace('\\', '/');
     }
 
     public Path attachmentPath(int property, int attachment, boolean privateDoc) {
@@ -1693,9 +2131,8 @@ public final class ServicioInmobiliaria {
                         .filter(x -> x.id("id") == attachment)
                         .findFirst()
                         .orElseThrow();
-        if (!privateDoc && (r.text("archivo").startsWith("https://")
-                || r.text("archivo").startsWith("http://")))
-            throw new IllegalArgumentException("El archivo multimedia está alojado en la nube.");
+        if (r.text("archivo").startsWith("https://") || r.text("archivo").startsWith("http://"))
+            throw new IllegalArgumentException("Este archivo sigue alojado en un servicio externo; descargalo y volvé a adjuntarlo para guardarlo localmente.");
         return ar.edu.nuevohogar.persistencia.dao.RutasAdjuntos.resolve(
                 db.storage, db.webMediaRoot, db.webMediaPrefix, r.text("archivo"), privateDoc);
     }

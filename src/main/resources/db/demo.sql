@@ -188,13 +188,14 @@ CREATE TABLE IF NOT EXISTS convenios (
 CREATE TABLE IF NOT EXISTS propiedad_ofertas (
  id_propiedad INT NOT NULL, id_tipo_transaccion INT NOT NULL,
  precio DECIMAL(12,2) NOT NULL CHECK(precio>0), moneda VARCHAR(3) NOT NULL,
+ precio_minimo DECIMAL(12,2) NULL,
  PRIMARY KEY(id_propiedad,id_tipo_transaccion),
  FOREIGN KEY(id_propiedad) REFERENCES propiedades(id_propiedad),
  FOREIGN KEY(id_tipo_transaccion) REFERENCES tipos_transaccion(id_tipo_transaccion)
 );
-INSERT INTO propiedad_ofertas SELECT p.id_propiedad,p.id_tipo_transaccion,p.precio,p.moneda FROM propiedades p WHERE NOT EXISTS (SELECT 1 FROM propiedad_ofertas o WHERE o.id_propiedad=p.id_propiedad AND o.id_tipo_transaccion=p.id_tipo_transaccion) AND NOT EXISTS (SELECT 1 FROM schema_version WHERE version=2);
+INSERT INTO propiedad_ofertas(id_propiedad,id_tipo_transaccion,precio,moneda) SELECT p.id_propiedad,p.id_tipo_transaccion,p.precio,p.moneda FROM propiedades p WHERE NOT EXISTS (SELECT 1 FROM propiedad_ofertas o WHERE o.id_propiedad=p.id_propiedad AND o.id_tipo_transaccion=p.id_tipo_transaccion) AND NOT EXISTS (SELECT 1 FROM schema_version WHERE version=2);
 CREATE TABLE IF NOT EXISTS documentos (
- id_documento INT AUTO_INCREMENT PRIMARY KEY, id_propiedad INT NOT NULL,
+ id_documento INT AUTO_INCREMENT PRIMARY KEY, id_propiedad INT NULL, id_solicitud INT NULL,
  tipo VARCHAR(40) NOT NULL, nombre VARCHAR(255) NOT NULL, archivo VARCHAR(500) NOT NULL,
  id_usuario INT NOT NULL, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
  FOREIGN KEY(id_propiedad) REFERENCES propiedades(id_propiedad),
@@ -209,12 +210,58 @@ CREATE TABLE IF NOT EXISTS publicaciones (
  FOREIGN KEY(id_solicitante) REFERENCES usuarios(id_usuario),
  FOREIGN KEY(id_revisor) REFERENCES usuarios(id_usuario)
 );
+CREATE TABLE IF NOT EXISTS solicitudes_publicacion (
+ id_solicitud INT AUTO_INCREMENT PRIMARY KEY, id_cliente INT NOT NULL,
+ id_tipo_propiedad INT NOT NULL, id_tipo_transaccion INT NOT NULL,
+ id_estado_verificacion INT NOT NULL DEFAULT 2, titulo VARCHAR(200) NOT NULL,
+ direccion VARCHAR(255) NOT NULL, localidad VARCHAR(100) NOT NULL,
+ descripcion TEXT NOT NULL, precio_estimado DECIMAL(12,2) NULL,
+ superficie_total_m2 DECIMAL(8,2) NOT NULL, ambientes INT NULL,
+ dormitorios INT NULL, banos INT NULL, antiguedad_anos INT DEFAULT 0,
+ motivo_rechazo TEXT NULL, fecha_solicitud TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+ fecha_actualizacion TIMESTAMP NULL, id_agente INT NULL,
+ moneda VARCHAR(3) NOT NULL DEFAULT 'USD', faltan_planos INT NOT NULL DEFAULT 0,
+ falta_escritura INT NOT NULL DEFAULT 0, observaciones_documentacion TEXT NULL,
+ FOREIGN KEY(id_cliente) REFERENCES usuarios(id_usuario),
+ FOREIGN KEY(id_tipo_propiedad) REFERENCES tipos_propiedad(id_tipo_propiedad),
+ FOREIGN KEY(id_tipo_transaccion) REFERENCES tipos_transaccion(id_tipo_transaccion),
+ FOREIGN KEY(id_agente) REFERENCES usuarios(id_usuario)
+);
+CREATE TABLE IF NOT EXISTS solicitud_multimedia (
+ id_multimedia INT AUTO_INCREMENT PRIMARY KEY, id_solicitud INT NOT NULL,
+ url_archivo VARCHAR(500) NOT NULL, tipo VARCHAR(20) NOT NULL DEFAULT 'Imagen',
+ fecha_carga TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(id_solicitud) REFERENCES solicitudes_publicacion(id_solicitud) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS solicitud_ofertas (
+ id_solicitud INT NOT NULL, id_tipo_transaccion INT NOT NULL,
+ precio DECIMAL(12,2) NOT NULL, moneda VARCHAR(3) NOT NULL,
+ precio_minimo DECIMAL(12,2) NULL,
+ PRIMARY KEY(id_solicitud,id_tipo_transaccion),
+ FOREIGN KEY(id_solicitud) REFERENCES solicitudes_publicacion(id_solicitud) ON DELETE CASCADE,
+ FOREIGN KEY(id_tipo_transaccion) REFERENCES tipos_transaccion(id_tipo_transaccion)
+);
+CREATE TABLE IF NOT EXISTS solicitud_caracteristicas (
+ id_solicitud INT NOT NULL, id_caracteristica INT NOT NULL,
+ PRIMARY KEY(id_solicitud,id_caracteristica),
+ FOREIGN KEY(id_solicitud) REFERENCES solicitudes_publicacion(id_solicitud) ON DELETE CASCADE,
+ FOREIGN KEY(id_caracteristica) REFERENCES caracteristicas(id_caracteristica)
+);
+ALTER TABLE propiedades ADD COLUMN IF NOT EXISTS id_solicitud INT NULL;
+ALTER TABLE propiedad_ofertas ADD COLUMN IF NOT EXISTS precio_minimo DECIMAL(12,2) NULL;
+ALTER TABLE documentos ADD COLUMN IF NOT EXISTS id_solicitud INT NULL;
+ALTER TABLE propiedades ADD COLUMN IF NOT EXISTS faltan_planos INT NOT NULL DEFAULT 0;
+ALTER TABLE propiedades ADD COLUMN IF NOT EXISTS falta_escritura INT NOT NULL DEFAULT 0;
+ALTER TABLE propiedades ADD COLUMN IF NOT EXISTS observaciones_documentacion TEXT NULL;
 INSERT INTO publicaciones(id_propiedad,id_solicitante,estado)
  SELECT p.id_propiedad,p.id_agente_creador,'Pendiente' FROM propiedades p WHERE p.id_estado_verificacion=2 AND p.id_agente_creador IS NOT NULL AND NOT EXISTS (SELECT 1 FROM publicaciones existing WHERE existing.id_propiedad=p.id_propiedad) AND NOT EXISTS (SELECT 1 FROM schema_version WHERE version=2);
 CREATE TABLE IF NOT EXISTS contactos (
- id_contacto INT AUTO_INCREMENT PRIMARY KEY, id_cliente INT NOT NULL,
+ id_contacto INT AUTO_INCREMENT PRIMARY KEY, id_cliente INT NULL,
  id_agente INT NOT NULL, id_propiedad INT NULL, tipo VARCHAR(20) NOT NULL,
  fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP, descripcion TEXT NOT NULL, resultado TEXT NULL,
+ nombre_contacto VARCHAR(120) NULL, email_contacto VARCHAR(190) NULL,
+ telefono_contacto VARCHAR(40) NULL, estado VARCHAR(20) NOT NULL DEFAULT 'Pendiente',
+ fecha_respuesta TIMESTAMP NULL,
  FOREIGN KEY(id_cliente) REFERENCES usuarios(id_usuario),
  FOREIGN KEY(id_agente) REFERENCES usuarios(id_usuario),
  FOREIGN KEY(id_propiedad) REFERENCES propiedades(id_propiedad)
@@ -378,7 +425,7 @@ CREATE TABLE IF NOT EXISTS impuestos_propiedad (
  id_propiedad INT NOT NULL,
  nombre VARCHAR(120) NOT NULL,
  base_imponible DECIMAL(12,2) NOT NULL,
- porcentaje DECIMAL(7,4) NOT NULL,
+ porcentaje DECIMAL(5,2) NOT NULL,
  importe DECIMAL(12,2) NOT NULL,
  moneda VARCHAR(3) NOT NULL,
  periodo VARCHAR(80) NOT NULL,
@@ -387,4 +434,17 @@ CREATE TABLE IF NOT EXISTS impuestos_propiedad (
  FOREIGN KEY(id_propiedad) REFERENCES propiedades(id_propiedad),
  FOREIGN KEY(id_usuario) REFERENCES usuarios(id_usuario),
  CHECK(base_imponible >= 0), CHECK(porcentaje >= 0 AND porcentaje <= 100), CHECK(importe >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS propiedad_impuestos (
+ id_impuesto INT AUTO_INCREMENT PRIMARY KEY, id_propiedad INT NULL,
+ id_solicitud INT NULL, concepto VARCHAR(100) NOT NULL,
+ base DECIMAL(12,2) NOT NULL, porcentaje DECIMAL(5,2) NOT NULL,
+ importe DECIMAL(12,2) NOT NULL, moneda VARCHAR(3) NOT NULL,
+ periodo VARCHAR(80) NOT NULL, id_usuario INT NOT NULL,
+ fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(id_propiedad) REFERENCES propiedades(id_propiedad),
+ FOREIGN KEY(id_solicitud) REFERENCES solicitudes_publicacion(id_solicitud),
+ FOREIGN KEY(id_usuario) REFERENCES usuarios(id_usuario),
+ CHECK(base >= 0), CHECK(porcentaje >= 0 AND porcentaje <= 100), CHECK(importe >= 0)
 );

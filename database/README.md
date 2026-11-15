@@ -16,12 +16,16 @@ Luego importá, en orden:
 1. `01_original.sql`.
 2. `02_migracion.sql`.
 3. `05_modulos_comerciales.sql` (visitas, tareas y trazabilidad de precios/asignaciones).
+4. `06_impuestos_propiedad.sql`.
+5. `07_dinamica_web.sql` (solicitudes de propietarios, consultas públicas, precio mínimo e impuestos compatibles).
 
 En phpMyAdmin seleccioná primero la base y usá **Importar** para cada archivo. En el cliente SQL de línea de comandos se puede usar `SOURCE ruta/al/archivo.sql`.
 
 ## Base que ya está en uso
 
-No vuelvas a importar `01_original.sql` ni `02_migracion.sql` sobre la base existente. Seleccioná `inmobiliaria` en phpMyAdmin e importá solamente `05_modulos_comerciales.sql`. Es una ampliación aditiva de la versión 2; no reemplaza tus usuarios ni propiedades. La aplicación usa esas tablas nuevas para la agenda de visitas, recordatorios y el historial comercial.
+No vuelvas a importar `01_original.sql` ni `02_migracion.sql` sobre la base existente. En una base creada con las migraciones de esta app, respaldá y aplicá las migraciones que todavía falten, en orden: `05_modulos_comerciales.sql`, `06_impuestos_propiedad.sql` y `07_dinamica_web.sql`.
+
+Si estás usando la base de la web del ZIP, no importes los scripts 01/02 ni repitas migraciones que ya tenga. Respaldá esa base y verificá primero que estén las tablas previas requeridas (propiedades, ofertas, documentos, contactos y solicitudes). Luego aplicá `07_dinamica_web.sql` una sola vez. La copia desde `impuestos_propiedad` solo se ejecuta si esa tabla antigua existe.
 
 ## Si ya existe una base
 
@@ -68,16 +72,15 @@ db.url=jdbc:mysql://HOST:3306/BASE?sslMode=REQUIRED
 db.user=USUARIO_DE_LA_BASE
 db.password=tu_clave_local
 storage.path=data/archivos
-cloudinary.cloud_name=evcpusrx
-cloudinary.upload_preset=inmuebles_unsigned
-private_media.api_url=https://TU-SERVIDOR.example.com
 ```
 
 No guardes el archivo con credenciales en Git. Para una ruta de Windows dentro de un `.properties`, usá barras `/` o escapá cada barra inversa: `storage.path=C:/datos/nuevo-hogar/archivos`.
 
-Las fotos y videos de propiedades se suben a Cloudinary usando el preset `inmuebles_unsigned`; la tabla `propiedad_multimedia.url_archivo` guarda la URL `https` devuelta. Los documentos privados nuevos se suben al backend central y se guardan en Cloudinary con acceso autenticado. No incluyas el API Secret en la app ni en `config.properties`.
+Las fotos, videos y documentos se copian a `storage.path`, dentro de una subcarpeta por propiedad. La base guarda rutas relativas como `propiedades/ID/archivo.ext`, por lo que se pueden conservar al trasladar juntos el respaldo SQL y la carpeta de archivos. No borres ni renombres archivos desde el explorador mientras haya registros que los referencien.
 
-Para desplegar el backend seguro de documentos y conectarlo desde todas las PCs, seguí [SERVIDOR_DOCUMENTOS.md](SERVIDOR_DOCUMENTOS.md). Requiere una MariaDB central accesible desde el backend y la URL HTTPS del servicio en `private_media.api_url`.
+Para compartir multimedia localmente con la web PHP, configurá `media.web.root` con la carpeta del proyecto (por ejemplo `C:/xampp/htdocs/Inmobiliaria`) y `media.web.prefix=/Inmobiliaria/`. La app lee las rutas públicas existentes y guarda nuevas fotos/videos de propiedades en `archivos/propiedades/` y multimedia de solicitudes en `archivos/solicitudes/`, con rutas web `/Inmobiliaria/archivos/...`. Los documentos privados siempre quedan en `storage.path`. Esto funciona cuando la app y XAMPP están en la misma computadora; no permite que una computadora remota escriba en el disco local del servidor.
+
+Durante el desarrollo, `storage.path=data/archivos` guarda los archivos junto al proyecto. Al desplegar, la aplicación debe apuntar a una carpeta persistente del servidor. Si varias instalaciones de escritorio van a compartir esa base, hace falta un servicio del servidor para recibir y servir los archivos; una ruta local del servidor no es automáticamente accesible desde las demás computadoras.
 
 ## Qué cambia y por qué
 
@@ -108,10 +111,14 @@ La migración `05_modulos_comerciales.sql` agrega el soporte de visitas, recorda
 
 Los scripts se prepararon para MySQL 8 / MariaDB 10.4 o posterior, tomando como base el dump entregado. La suite funcional ejecutada utiliza H2 en modo MySQL. En este equipo no se dispuso de un servidor MySQL/MariaDB para ejecutar la migración real; debe probarse primero en una copia de tu base.
 
-## Impuestos por propiedad (versión actual)
+## Impuestos por propiedad (compatibilidad)
 
 Aplicar `06_impuestos_propiedad.sql` después de las migraciones 02 y 05 sobre MySQL/MariaDB.
 Es aditiva y se puede repetir: crea la tabla de cálculos manuales, sin cambiar usuarios ni credenciales.
 Respaldar primero la base existente. H2 incorpora esta tabla al iniciar.
-Los cálculos guardan base, porcentaje, importe, moneda y período; no aplican tasas oficiales.
+Los cálculos guardan base, porcentaje, importe, moneda y período; no aplican tasas oficiales. `07_dinamica_web.sql` copia los registros anteriores desde `impuestos_propiedad` a la tabla compartida `propiedad_impuestos`.
 Planos, escrituras y comprobantes usan la tabla privada `documentos` ya existente.
+
+## Compatibilidad de la app con la web
+
+La app y la web deben conectarse a la misma base para compartir registros. Aplicá `07_dinamica_web.sql` una sola vez sobre un respaldo después de confirmar las estructuras previas. El script está preparado para MariaDB 10.4+ (incluye `ADD COLUMN IF NOT EXISTS`). Para una base nueva, importá los archivos en el orden indicado. Las fotos y videos públicos guardados bajo `media.web.root` se comparten directamente con la web local. Los documentos privados permanecen en `storage.path`; al desplegar, ambas carpetas deben trasladarse a ubicaciones persistentes del servidor y configurarse allí.

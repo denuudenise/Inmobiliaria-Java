@@ -10,7 +10,6 @@ import ar.edu.nuevohogar.interfaz.paneles.administrador.PanelAdministrador;
 import ar.edu.nuevohogar.interfaz.paneles.agente.PanelAgente;
 import ar.edu.nuevohogar.interfaz.paneles.cliente.PanelCliente;
 import ar.edu.nuevohogar.interfaz.componentes.Formulario;
-import ar.edu.nuevohogar.interfaz.autenticacion.FormularioAcceso;
 
 import javafx.application.*;
 import javafx.beans.property.SimpleStringProperty;
@@ -39,7 +38,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.function.*;
 
-/** Presentación JavaFX: catálogo y paneles por rol sobre los mismos servicios. */
+/** Presentación JavaFX de gestión interna, con espacios de trabajo según el rol. */
 public final class AplicacionInmobiliaria extends Application {
     private record ElementoGaleria(String uri, boolean video) {}
 
@@ -47,7 +46,7 @@ public final class AplicacionInmobiliaria extends Application {
     private Stage stage;
     private final BorderPane root = new BorderPane();
     private VBox content;
-    private String activePage = "Catálogo";
+    private String activePage = "Iniciar sesión";
     private MediaPlayer activeMediaPlayer;
 
     @Override
@@ -111,57 +110,11 @@ public final class AplicacionInmobiliaria extends Application {
                 new VBox(
                         0,
                         label("⌂  Nuevo Hogar", "brand"),
-                        label("Tu próximo hogar, está aquí", "footer"));
+                        label("Plataforma de gestión inmobiliaria", "footer"));
         Region gap = new Region();
         HBox.setHgrow(gap, Priority.ALWAYS);
         header.getChildren().addAll(brand, gap);
         if (!service.signedIn()) {
-            root.setTop(header);
-            root.setLeft(null);
-            return;
-        }
-        if (service.role() == 3) {
-            header.getChildren()
-                    .addAll(
-                            navButton("Inicio", this::catalog),
-                            navButton("Comprar", () -> catalog(1)),
-                            navButton("Alquilar", () -> catalog(2)),
-                            navButton("Vender", () -> propertyForm(null)),
-                            navButton("Mis solicitudes", this::requests));
-            MenuButton account = new MenuButton("Mi cuenta  ▾");
-            account.getStyleClass().add("account-menu");
-            MenuItem profileItem = new MenuItem("Mi perfil");
-            MenuItem propertiesItem = new MenuItem("Mis propiedades");
-            MenuItem requestsItem = new MenuItem("Mis solicitudes");
-            MenuItem interestsItem = new MenuItem("Mis intereses");
-            MenuItem preferencesItem = new MenuItem("Mi búsqueda");
-            MenuItem visitsItem = new MenuItem("Mis visitas");
-            MenuItem logoutItem = new MenuItem("Cerrar sesión");
-            profileItem.setOnAction(e -> safe(this::profile));
-            propertiesItem.setOnAction(e -> safe(this::propertyList));
-            requestsItem.setOnAction(e -> safe(this::requests));
-            interestsItem.setOnAction(
-                    e -> safe(() -> interests(service.current().id("id_usuario"))));
-            preferencesItem.setOnAction(
-                    e -> safe(() -> preferences(service.current().id("id_usuario"))));
-            visitsItem.setOnAction(e -> safe(this::visits));
-            logoutItem.setOnAction(
-                    e -> {
-                        service.logout();
-                        shell();
-                        login();
-                    });
-            account.getItems()
-                    .addAll(
-                            profileItem,
-                            propertiesItem,
-                            requestsItem,
-                            interestsItem,
-                            preferencesItem,
-                            visitsItem,
-                            new SeparatorMenuItem(),
-                            logoutItem);
-            header.getChildren().add(account);
             root.setTop(header);
             root.setLeft(null);
             return;
@@ -186,7 +139,7 @@ public final class AplicacionInmobiliaria extends Application {
                     this::dashboard, this::clients, this::propertyList, this::requests,
                     this::visits, this::offersAndReservations, this::followups, this::operations,
                     this::agents, this::users, this::reports, this::notifications, this::agreements,
-                    this::buildings, this::settings, this::catalog);
+                    this::buildings, this::settings, this::consultations, this::auditPage);
             for (ElementoMenuPanel item : adminMenu) {
                 if (item.seccion()) nav.getChildren().add(label(item.nombre(), "admin-side-caption"));
                 else {
@@ -205,9 +158,6 @@ public final class AplicacionInmobiliaria extends Application {
             return;
         }
         if (service.signedIn()) {
-            if (service.role() == 3) {
-                header.getChildren().add(navButton("Catálogo", this::catalog));
-            }
             header.getChildren().addAll(
                             button("Mi perfil", this::profile),
                             label(
@@ -233,8 +183,9 @@ public final class AplicacionInmobiliaria extends Application {
         List<ElementoMenuPanel> roleMenu = service.role() == 2
                 ? PanelAgente.menu(this::dashboard, this::propertyList, this::requests, this::visits,
                         this::offersAndReservations, this::followups, this::clients, this::agreements,
-                        this::buildings, this::operations, this::reports, this::notifications, this::catalog)
-                : PanelCliente.menu(this::dashboard, this::catalog, this::requests, this::visits,
+                        this::buildings, this::operations, this::reports, this::notifications,
+                        this::consultations)
+                : PanelCliente.menu(this::dashboard, this::propertyList, this::requests, this::visits,
                         this::offersAndReservations,
                         () -> interests(service.current().id("id_usuario")),
                         () -> preferences(service.current().id("id_usuario")), this::notifications,
@@ -242,13 +193,14 @@ public final class AplicacionInmobiliaria extends Application {
         for (ElementoMenuPanel item : roleMenu) nav.getChildren().add(button(item.nombre(), item.accion()));
         Region spacer = new Region();
         VBox.setVgrow(spacer, Priority.ALWAYS);
-        nav.getChildren()
-                .addAll(
-                        spacer,
-                        house(170, 105, 1),
-                        label(
-                                "Grandes oportunidades\ncomienzan con una\nbuena gestión.",
-                                "footer"));
+        nav.getChildren().add(spacer);
+        if (service.role() != 3)
+            nav.getChildren()
+                    .addAll(
+                            house(170, 105, 1),
+                            label(
+                                    "Grandes oportunidades\ncomienzan con una\nbuena gestión.",
+                                    "footer"));
         ScrollPane navScroll = new ScrollPane(nav);
         navScroll.setFitToWidth(true);
         navScroll.setPrefWidth(218);
@@ -285,12 +237,6 @@ public final class AplicacionInmobiliaria extends Application {
     private Button secondary(String text, Runnable action) {
         Button b = button(text, action);
         b.getStyleClass().add("secondary");
-        return b;
-    }
-
-    private Button navButton(String text, Runnable action) {
-        Button b = button(text, action);
-        b.getStyleClass().add("nav-link");
         return b;
     }
 
@@ -537,38 +483,61 @@ public final class AplicacionInmobiliaria extends Application {
         activePage = "Iniciar sesión";
         root.setTop(loginHeader());
         root.setLeft(null);
-        Formulario f = FormularioAcceso.inicioSesion();
+        Formulario f = new Formulario(1);
+        f.text("email", "Correo electrónico", "");
+        PasswordField password = new PasswordField();
+        password.setPromptText("Contraseña");
+        password.setAccessibleText("Contraseña");
+        TextField visiblePassword = new TextField();
+        visiblePassword.setPromptText("Contraseña");
+        visiblePassword.setAccessibleText("Contraseña visible");
+        visiblePassword.textProperty().bindBidirectional(password.textProperty());
+        visiblePassword.setVisible(false);
+        visiblePassword.setManaged(false);
+        ToggleButton revealPassword = new ToggleButton("Mostrar");
+        revealPassword.getStyleClass().add("password-toggle");
+        revealPassword.setAccessibleText("Mostrar u ocultar la contraseña");
+        revealPassword.setOnAction(event -> {
+            boolean visible = revealPassword.isSelected();
+            password.setVisible(!visible);
+            password.setManaged(!visible);
+            visiblePassword.setVisible(visible);
+            visiblePassword.setManaged(visible);
+            revealPassword.setText(visible ? "Ocultar" : "Mostrar");
+        });
+        StackPane passwordFields = new StackPane(password, visiblePassword);
+        HBox passwordRow = new HBox(8, passwordFields, revealPassword);
+        HBox.setHgrow(passwordFields, Priority.ALWAYS);
+        VBox passwordInput = new VBox(6, label("Contraseña", "field-label"), passwordRow);
+        password.getStyleClass().add("login-password-input");
+        visiblePassword.getStyleClass().add("login-password-input");
         VBox form = new VBox(14);
         form.getStyleClass().add("login-card");
-        form.setMaxWidth(360);
-        form.setPrefWidth(360);
+        form.setMaxWidth(430);
+        form.setPrefWidth(430);
         form.setMaxHeight(Region.USE_PREF_SIZE);
         Button submit = button(
                 "Iniciar sesión",
                 () -> {
-                    service.login(f.value("email"), f.value("password"));
+                    service.login(f.value("email"), password.getText());
                     shell();
-                    if (service.role() == 3) catalog();
-                    else dashboard();
+                    dashboard();
                 });
-        Button signup = secondary("Crear una cuenta", this::register);
         Button forgotPassword = secondary("¿Olvidaste tu contraseña?", this::forgotPassword);
         form.setSpacing(9);
         f.setHgap(0);
-        f.setVgap(8);
+        f.setVgap(14);
         submit.setMaxWidth(Double.MAX_VALUE);
-        signup.setMaxWidth(Double.MAX_VALUE);
         forgotPassword.setMaxWidth(Double.MAX_VALUE);
         submit.setAlignment(Pos.CENTER_LEFT);
-        signup.setAlignment(Pos.CENTER_LEFT);
         forgotPassword.setAlignment(Pos.CENTER_RIGHT);
         forgotPassword.getStyleClass().add("text-link");
         form.getChildren().addAll(
                 label("Iniciar sesión", "section-title"),
                 f,
+                passwordInput,
                 forgotPassword,
-                submit,
-                signup);
+                submit);
         if (service.db.demo)
             form.getChildren().add(
                     label(
@@ -629,10 +598,10 @@ public final class AplicacionInmobiliaria extends Application {
                 1,
                 label("INMOBILIARIA", "login-brand-kicker"),
                 label("Nuevo Hogar", "login-brand-name"),
-                label("Tu próximo hogar, está aquí", "login-brand-tagline"));
+                label("Gestión inmobiliaria", "login-brand-tagline"));
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        Label services = label("COMPRA  ·  VENTA  ·  ALQUILER", "login-header-note");
+        Label services = label("ADMINISTRACIÓN  ·  AGENTES  ·  CARTERA", "login-header-note");
         header.getChildren().addAll(logo, name, spacer, services);
         return header;
     }
@@ -652,278 +621,6 @@ public final class AplicacionInmobiliaria extends Application {
                         + "Si la cuenta es la de Admin, contactá al responsable técnico del sistema.");
         styleDialog(alert);
         alert.showAndWait();
-    }
-
-    private void register() {
-        page(
-                "Creá tu cuenta",
-                "Completá estos pasos para comenzar a buscar tu próximo hogar.");
-        content.getStyleClass().add("registration-page");
-        Formulario personal = FormularioAcceso.datosPersonales();
-        Formulario contact = FormularioAcceso.datosDeContacto();
-        PasswordField pass = (PasswordField) contact.control("password");
-        PasswordField confirm = (PasswordField) contact.control("confirm");
-        Formulario address = new Formulario();
-        address.text("direccion", "Dirección", "");
-        address.text("localidad", "Localidad", "");
-        Formulario[] steps = {personal, contact, address};
-        String[] names = {
-            "Datos personales", "Contacto y seguridad", "Tu dirección"
-        };
-        String[] summaries = {
-            "Cómo te identificamos", "Correo y contraseña de acceso", "Dónde podemos encontrarte"
-        };
-        String[] descriptions = {
-            "Ingresá tus datos tal como aparecen en tu documento.",
-            "Usá un correo vigente y una contraseña segura de al menos 10 caracteres.",
-            "Completá tu ubicación para recibir una atención más cercana."
-        };
-        int[] index = {0};
-        VBox area = new VBox(18);
-        area.getStyleClass().add("registration-card");
-        area.setMaxWidth(820);
-        HBox[] stepRows = new HBox[names.length];
-        Label[] markers = new Label[names.length];
-        VBox progress = new VBox(0);
-        progress.getStyleClass().add("registration-progress");
-        progress.setMinWidth(245);
-        progress.setPrefWidth(245);
-        progress.getChildren().addAll(
-                label("TU REGISTRO", "registration-eyebrow"),
-                label("Tres pasos sencillos", "registration-progress-title"),
-                label("Tu cuenta será de cliente y podrás explorar propiedades.", "registration-progress-copy"));
-        for (int i = 0; i < names.length; i++) {
-            markers[i] = label(Integer.toString(i + 1), "registration-step-marker");
-            VBox text = new VBox(3,
-                    label(names[i], "registration-step-title"),
-                    label(summaries[i], "registration-step-copy"));
-            stepRows[i] = new HBox(12, markers[i], text);
-            stepRows[i].setAlignment(Pos.CENTER_LEFT);
-            stepRows[i].getStyleClass().add("registration-step");
-            VBox.setMargin(stepRows[i], new Insets(18, 0, 0, 0));
-            progress.getChildren().add(stepRows[i]);
-        }
-        progress.getChildren().addAll(
-                new Region(),
-                label("Tus datos se usan para gestionar tu cuenta y tus consultas.", "registration-privacy"));
-        Runnable[] show = {null};
-        show[0] =
-                () -> {
-                    for (int i = 0; i < stepRows.length; i++) {
-                        stepRows[i].getStyleClass().removeAll("active", "complete", "upcoming");
-                        stepRows[i].getStyleClass().add(
-                                i == index[0] ? "active" : i < index[0] ? "complete" : "upcoming");
-                        markers[i].setText(i < index[0] ? "✓" : Integer.toString(i + 1));
-                    }
-                    Label stepCount = label("PASO " + (index[0] + 1) + " DE " + steps.length,
-                            "registration-eyebrow");
-                    Label stepTitle = label(names[index[0]], "registration-form-title");
-                    Label stepDescription = label(descriptions[index[0]], "registration-form-copy");
-                    stepDescription.setWrapText(true);
-                    VBox heading = new VBox(6, stepCount, stepTitle, stepDescription);
-                    HBox controls = new HBox(12);
-                    controls.setAlignment(Pos.CENTER_LEFT);
-                    if (index[0] > 0)
-                        controls.getChildren()
-                                .add(
-                                        secondary(
-                                                "Volver",
-                                                () -> {
-                                                    index[0]--;
-                                                    show[0].run();
-                                                }));
-                    Region controlGap = new Region();
-                    HBox.setHgrow(controlGap, Priority.ALWAYS);
-                    controls.getChildren().add(controlGap);
-                    controls.getChildren()
-                            .add(
-                                    button(
-                                            index[0] == steps.length - 1 ? "Crear cuenta" : "Continuar",
-                                            () -> {
-                                                if (index[0] == 0) {
-                                                    for (String k :
-                                                            List.of("nombre", "apellido", "dni"))
-                                                        if (personal.value(k).isBlank())
-                                                            throw new IllegalArgumentException(
-                                                                    "Completá tus datos"
-                                                                            + " personales.");
-                                                }
-                                                if (index[0] == 1) {
-                                                    if (contact.value("email").isBlank()
-                                                            || pass.getText().length() < 10
-                                                            || !pass.getText()
-                                                                    .equals(confirm.getText()))
-                                                        throw new IllegalArgumentException(
-                                                                "Revisá el correo y las"
-                                                                    + " contraseñas; deben"
-                                                                    + " coincidir y tener al menos"
-                                                                    + " 10 caracteres.");
-                                                }
-                                                if (index[0] < 2) {
-                                                    index[0]++;
-                                                    show[0].run();
-                                                } else {
-                                                    Map<String, String> d =
-                                                            new HashMap<>(personal.values());
-                                                    d.putAll(contact.values());
-                                                    d.putAll(address.values());
-                                                    service.register(d, pass.getText());
-                                                    service.login(d.get("email"), pass.getText());
-                                                    shell();
-                                                    catalog();
-                                                    info(
-                                                            "Tu cuenta se creó correctamente. Ya"
-                                                                    + " podés explorar las propiedades"
-                                                                    + " en venta y alquiler.");
-                                                }
-                                            }));
-                    area.getChildren().setAll(heading, steps[index[0]], controls);
-                };
-        show[0].run();
-        HBox layout = new HBox(22, progress, area);
-        layout.setAlignment(Pos.TOP_CENTER);
-        HBox.setHgrow(area, Priority.ALWAYS);
-        content.getChildren().addAll(
-                layout,
-                secondary("¿Ya tenés una cuenta? Iniciar sesión", this::login));
-    }
-
-    private void catalog() {
-        catalog(0);
-    }
-
-    private void catalog(int operationFilter) {
-        if (!service.signedIn()) {
-            login();
-            return;
-        }
-        page(
-                operationFilter == 1
-                        ? "Propiedades en venta"
-                        : operationFilter == 2
-                                ? "Propiedades en alquiler"
-                                : "Catálogo de propiedades",
-                "Casas, departamentos y terrenos. Un lugar para cada nueva etapa.");
-        content.getStyleClass().add("catalog-page");
-        content.getChildren().clear();
-        VBox introduction = new VBox(12,
-                label("NUEVO HOGAR  /  PROPIEDADES", "catalog-eyebrow"),
-                label(operationFilter == 1 ? "Un lugar para\nllamar tuyo." : operationFilter == 2
-                        ? "Tu próxima etapa\nempieza acá." : "Encontrá un lugar\npara tu próxima historia.", "catalog-hero-title"),
-                label("Explorá, compará y elegí tu próximo espacio.", "catalog-hero-copy"));
-        introduction.getStyleClass().add("catalog-introduction");
-        introduction.setAlignment(Pos.CENTER_LEFT);
-        introduction.setMinWidth(0);
-        StackPane atmosphere = new StackPane();
-        atmosphere.getStyleClass().add("catalog-atmosphere");
-        atmosphere.setAccessibleText("Imagen ambiental de un living, ilustrativa del catálogo");
-        GridPane welcome = new GridPane();
-        welcome.getStyleClass().add("catalog-welcome");
-        ColumnConstraints textColumn = new ColumnConstraints(); textColumn.setPercentWidth(56);
-        ColumnConstraints photoColumn = new ColumnConstraints(); photoColumn.setPercentWidth(44);
-        welcome.getColumnConstraints().addAll(textColumn, photoColumn);
-        RowConstraints heroRow = new RowConstraints(); heroRow.setPercentHeight(100);
-        welcome.getRowConstraints().add(heroRow);
-        welcome.add(introduction, 0, 0); welcome.add(atmosphere, 1, 0);
-        welcome.setMinHeight(208); welcome.setPrefHeight(208);
-        Rectangle heroClip = new Rectangle();
-        heroClip.widthProperty().bind(welcome.widthProperty()); heroClip.heightProperty().bind(welcome.heightProperty());
-        heroClip.setArcWidth(30); heroClip.setArcHeight(30); welcome.setClip(heroClip);
-        content.getChildren().add(welcome);
-        Formulario filter = new Formulario(3);
-        TextField query = filter.text("q", "Ubicación o propiedad", "");
-        query.setPromptText("Localidad, dirección o título");
-        filter.rows("type", "Tipo de propiedad", service.lookup("tipos_propiedad"), 0, true);
-        filter.rows(
-                "operation", "Operación", service.lookup("tipos_transaccion"), operationFilter, true);
-        Formulario extra = new Formulario(4);
-        extra.text("max", "Precio máximo", "").setPromptText("Sin límite");
-        extra.choice("currency", "Moneda", "USD", "USD", "ARS");
-        extra.text("beds", "Dormitorios mínimos", "0");
-        extra.text("capacity", "Capacidad mínima", "0");
-        Map<Integer, CheckBox> features = featureChecks(Set.of());
-        FlowPane cards = new FlowPane(20, 22);
-        javafx.beans.binding.DoubleBinding tileWidth = javafx.beans.binding.Bindings.createDoubleBinding(() -> {
-            double available = Math.max(280, cards.getWidth());
-            int columns = Math.max(1, Math.min(4, (int) ((available + 20) / 300)));
-            return Math.floor((available - (columns - 1) * 20) / columns) - 2;
-        }, cards.widthProperty());
-        Label count = label("", "catalog-result-count");
-        Runnable search =
-                () -> {
-                    BigDecimal max =
-                            extra.value("max").isBlank() ? null : money(extra.value("max"));
-                    if (max != null && max.signum() < 0)
-                        throw new IllegalArgumentException(
-                                "El precio máximo no puede ser negativo.");
-                    int type = number(filter.value("type")),
-                            operation = number(filter.value("operation"));
-                    int beds = number(extra.value("beds")),
-                            capacity = number(extra.value("capacity"));
-                    if (beds < 0 || capacity < 0)
-                        throw new IllegalArgumentException(
-                                "Los filtros numéricos no pueden ser negativos.");
-                    List<Registro> rows =
-                            service.properties(
-                                    true,
-                                    filter.value("q"),
-                                    type == 0 ? null : type,
-                                    operation == 0 ? null : operation,
-                                    max,
-                                    extra.value("currency"),
-                                    beds,
-                                    capacity,
-                                    checked(features));
-                    cards.getChildren().clear();
-                    count.setText(rows.size() == 1 ? "1 propiedad" : rows.size() + " propiedades");
-                    for (Registro p : rows) {
-                        VBox propertyCard = propertyCard(p, operation);
-                        propertyCard.prefWidthProperty().bind(tileWidth);
-                        propertyCard.minWidthProperty().bind(tileWidth);
-                        propertyCard.maxWidthProperty().bind(tileWidth);
-                        cards.getChildren().add(propertyCard);
-                    }
-                    if (rows.isEmpty())
-                        cards.getChildren()
-                                .add(
-                                        card(
-                                                label(
-                                                        "No encontramos coincidencias",
-                                                        "section-title"),
-                                                label(
-                                                        "Probá con otra localidad o ampliá los"
-                                                                + " filtros.",
-                                                        "subtitle"),
-                                                secondary("Limpiar filtros", () -> catalog(operationFilter))));
-                };
-        TitledPane advanced =
-                new TitledPane("Más filtros · precio y características",
-                        new VBox(16, extra, label("Características", "subtitle"), flow(features.values().toArray(Node[]::new))));
-        advanced.getStyleClass().add("catalog-advanced");
-        advanced.setExpanded(false);
-        Region resultGap = new Region(); HBox.setHgrow(resultGap, Priority.ALWAYS);
-        HBox resultsTitle = new HBox(12,
-                new VBox(5, label("Descubrí las propiedades", "catalog-section-title"),
-                        label("Opciones para vivir, trabajar o invertir.", "catalog-results-copy")), resultGap, count);
-        resultsTitle.setAlignment(Pos.CENTER_LEFT);
-        Button searchButton = button("Buscar  →", search);
-        searchButton.getStyleClass().add("catalog-search-button");
-        searchButton.setMinWidth(128);
-        query.setOnAction(e -> safe(search));
-        HBox primaryFilters = row(filter, searchButton);
-        primaryFilters.setAlignment(Pos.BOTTOM_LEFT);
-        HBox.setHgrow(filter, Priority.ALWAYS);
-        Button reset = secondary("Limpiar búsqueda", () -> catalog(operationFilter));
-        reset.getStyleClass().add("catalog-reset");
-        HBox additionalFilters = row(advanced, reset);
-        additionalFilters.setAlignment(Pos.TOP_LEFT);
-        advanced.setMaxWidth(Double.MAX_VALUE);
-        VBox filters = card(primaryFilters, additionalFilters);
-        HBox.setHgrow(advanced, Priority.ALWAYS);
-        filters.getStyleClass().add("catalog-filters");
-        content.getChildren()
-                .addAll(filters, resultsTitle, cards);
-        search.run();
     }
 
     private StackPane catalogPhoto(Registro property) {
@@ -989,7 +686,7 @@ public final class AplicacionInmobiliaria extends Application {
                         Path path = service.attachmentPath(property.id("id_propiedad"), file.id("id"), false);
                         return Files.isRegularFile(path) ? path.toUri().toString() : null;
                     } catch (IllegalArgumentException e) {
-                        // Un adjunto antiguo o no disponible no debe impedir abrir el catálogo.
+                        // Un adjunto antiguo o no disponible no debe impedir mostrar la propiedad.
                         return null;
                     }
                 })
@@ -1287,7 +984,7 @@ public final class AplicacionInmobiliaria extends Application {
         List<Registro> characteristics = service.features(id);
         page(property.text("titulo"), property.text("direccion") + " · " + property.text("localidad"));
 
-        Button back = secondary("←  Volver al catálogo", this::catalog);
+        Button back = secondary("←  Volver a mis propiedades", this::propertyList);
         VBox facts = new VBox(14);
         facts.getStyleClass().add("property-detail-facts");
         facts.getChildren().addAll(
@@ -1297,6 +994,10 @@ public final class AplicacionInmobiliaria extends Application {
             HBox priceLine = new HBox(12, label(offer.text("operacion"), "property-price-caption"), label(formatOffer(offer), "property-detail-price"));
             priceLine.setAlignment(Pos.CENTER_LEFT);
             facts.getChildren().add(priceLine);
+            if (service.role() != 3 && offer.id("id_tipo_transaccion") == 1
+                    && offer.get("precio_minimo") != null)
+                facts.getChildren().add(label("Mínimo interno de venta: " + offer.text("moneda")
+                        + " " + formatNumber(offer.money("precio_minimo")), "subtitle"));
         }
         TilePane specifications = new TilePane(12, 12,
                 propertyDetailFact("⌂", metric(property, "dormitorios", ""), "dormitorios"),
@@ -1431,16 +1132,22 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void contactProperty(int id) {
-        if (!service.signedIn()) { login(); return; }
-        if (service.role() != 3) {
-            info("Podés vincular un cliente desde Clientes → Intereses.");
+        boolean registeredClient = service.signedIn() && service.role() == 3;
+        if (service.signedIn() && !registeredClient) {
+            info("Las consultas sobre inmuebles se envían desde el catálogo de la web.");
             return;
         }
         Formulario form = new Formulario();
+        if (!registeredClient) {
+            form.text("name", "Tu nombre *", "");
+            form.text("email", "Correo", "");
+            form.text("phone", "Teléfono", "");
+        }
         form.area("message", "Consulta", "Me interesa recibir información sobre esta propiedad.");
         dialog("Contactar a la inmobiliaria", form, "Enviar consulta", () -> {
-            service.interest(service.current().id("id_usuario"), id, "Interesado", form.value("message"));
-            info("Tu consulta quedó registrada. El equipo se pondrá en contacto con vos.");
+            service.createInquiry(id, registeredClient ? service.current().id("id_usuario") : null,
+                    form.value("name"), form.value("email"), form.value("phone"), form.value("message"));
+            info("Tu consulta quedó registrada. El equipo la verá en su panel.");
         });
     }
 
@@ -1597,35 +1304,18 @@ public final class AplicacionInmobiliaria extends Application {
         if (files.isEmpty())
             box.getChildren().add(label("Todavía no se cargaron archivos.", "subtitle"));
         for (Registro f : files) {
-            boolean cloudDocument = docs && f.text("archivo").startsWith("cloudinary-private|");
             String label = f.text("tipo") + " · " + (docs ? f.text("nombre") : "Archivo #" + f.id("id"));
             Button open = secondary(label, () -> {
                 try {
-                    if (cloudDocument) {
-                        getHostServices().showDocument(service.privateDocumentUrl(id, f.id("id")));
-                    } else {
-                        Path path = service.attachmentPath(id, f.id("id"), docs);
-                        if (!Files.isRegularFile(path))
-                            throw new IllegalArgumentException("El archivo local no está disponible.");
-                        getHostServices().showDocument(path.toUri().toString());
-                    }
+                    Path path = service.attachmentPath(id, f.id("id"), docs);
+                    if (!Files.isRegularFile(path))
+                        throw new IllegalArgumentException("El archivo local no está disponible.");
+                    getHostServices().showDocument(path.toUri().toString());
                 } catch (Exception e) {
                     throw new IllegalArgumentException(e.getMessage(), e);
                 }
             });
-            if (docs && !cloudDocument && service.privateDocumentsConfigured()) {
-                Button migrate = secondary("Subir a la nube", () -> {
-                    try {
-                        Path local = service.attachmentPath(id, f.id("id"), true);
-                        service.migratePrivateDocument(id, f.id("id"), local);
-                        info("El documento ya está guardado en la nube y disponible para el equipo.");
-                        propertyDetails(id);
-                    } catch (Exception e) {
-                        throw new IllegalArgumentException(e.getMessage(), e);
-                    }
-                });
-                box.getChildren().add(row(open, migrate));
-            } else box.getChildren().add(open);
+            box.getChildren().add(open);
         }
     }
 
@@ -1673,13 +1363,14 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void dashboard() {
-        service.generarAlertasDeSeguimiento();
+        if (service.role() != 3) service.generarAlertasDeSeguimiento();
         if (service.role() == 1) {
             adminDashboard();
             return;
         }
         List<Registro> properties = service.allProperties();
-        List<Registro> requests = service.requests();
+        List<Registro> requests = service.role() == 3 ? service.ownerRequests() : service.requests();
+        String requestStatusKey = service.role() == 3 ? "estado_nombre" : "estado";
         page(
                 "¡Hola, " + service.current().text("nombre") + "!",
                 "Aquí tenés un resumen de "
@@ -1706,7 +1397,7 @@ public final class AplicacionInmobiliaria extends Application {
                         stat(
                                 "En revisión",
                                 requests.stream()
-                                        .filter(r -> r.text("estado").equals("Pendiente"))
+                                        .filter(r -> r.text(requestStatusKey).equals("Pendiente"))
                                         .count()),
                         stat(
                                 "Rechazadas",
@@ -1785,11 +1476,11 @@ public final class AplicacionInmobiliaria extends Application {
         TableView<Registro> rq =
                 table(
                         requests.stream().limit(5).toList(),
-                        "id_publicacion",
+                        service.role() == 3 ? "id_solicitud" : "id_publicacion",
                         "ID",
                         "titulo",
                         "Propiedad",
-                        "estado",
+                        requestStatusKey,
                         "Estado",
                         "fecha_solicitud",
                         "Fecha");
@@ -1830,9 +1521,15 @@ public final class AplicacionInmobiliaria extends Application {
 
         FlowPane metrics = new FlowPane(14, 14);
         metrics.getStyleClass().add("admin-metrics");
+        long pendingOwnerRequests = service.ownerRequests().stream()
+                .filter(request -> request.id("id_estado_verificacion") == 2).count();
+        long pendingConsultations = service.consultations().stream()
+                .filter(inquiry -> inquiry.text("estado").equals("Pendiente")).count();
         metrics.getChildren().addAll(
                 adminMetric("♙", "Clientes registrados", data.clients(), "Personas en la cartera", "blue"),
                 adminMetric("▤", "Solicitudes pendientes", data.pendingRequests(), "Requieren revisión", "gold"),
+                adminMetric("⌂", "Propuestas de propietarios", pendingOwnerRequests, "Esperan asignación o decisión", "gold"),
+                adminMetric("✉", "Consultas pendientes", pendingConsultations, "Requieren respuesta del equipo", "teal"),
                 adminMetric("↗", "Operaciones cerradas", data.closedOperations(), "Ventas y alquileres", "blue"),
                 adminMetric("⌂", "Alquileres activos", data.rentedProperties(), "Propiedades alquiladas", "violet"),
                 adminMetric("♙", "Agentes activos", data.agents(), "" + data.totalUsers() + " usuarios activos", "teal"));
@@ -1894,6 +1591,14 @@ public final class AplicacionInmobiliaria extends Application {
         HBox requestRow = new HBox(16, requestCard, requestStatus);
         HBox.setHgrow(requestCard, Priority.ALWAYS);
         content.getChildren().add(requestRow);
+
+        List<Registro> recentOwnerRequests = service.ownerRequests().stream().limit(6).toList();
+        TableView<Registro> ownerRequests = table(recentOwnerRequests, "id_solicitud", "ID",
+                "titulo", "Propiedad propuesta", "cliente_nombre", "Propietario", "estado_nombre", "Estado",
+                "agente", "Agente");
+        content.getChildren().add(card(label("Propuestas de propietarios", "section-title"), ownerRequests,
+                row(button("Ver propuesta", () -> ownerRequestDetails(selected(ownerRequests).id("id_solicitud"))),
+                        secondary("Gestionar propuestas", this::requests))));
 
         VBox propertiesCard = card(label("Propiedades recientes", "section-title"), latestProperties,
                 row(button("Ver detalle", () -> propertyDetails(selected(latestProperties).id("id_propiedad"))),
@@ -2009,6 +1714,10 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void propertyForm(Registro original) {
+        if (service.role() == 3 && original == null) {
+            ownerRequestForm();
+            return;
+        }
         Registro p = original == null ? new Registro() : original;
         boolean edit = original != null;
         page(
@@ -2109,6 +1818,7 @@ public final class AplicacionInmobiliaria extends Application {
                                 "subtitle"));
         Map<Integer, CheckBox> enabled = new LinkedHashMap<>();
         Map<Integer, TextField> prices = new HashMap<>();
+        Map<Integer, TextField> minimumPrices = new HashMap<>();
         Map<Integer, ComboBox<String>> currencies = new HashMap<>();
         List<Registro> existing = edit ? service.offers(p.id("id_propiedad")) : List.of();
         for (Registro type : service.lookup("tipos_transaccion")) {
@@ -2124,13 +1834,18 @@ public final class AplicacionInmobiliaria extends Application {
             TextField price = new TextField(offer.text("precio"));
             price.setPromptText("Precio");
             price.setPrefWidth(180);
+            TextField minimum = new TextField(id == 1 ? offer.text("precio_minimo") : "");
+            minimum.setPromptText("Mínimo interno de venta");
+            minimum.setPrefWidth(190);
             ComboBox<String> currency =
                     new ComboBox<>(FXCollections.observableArrayList("USD", "ARS"));
             currency.setValue(offer.isEmpty() ? "USD" : offer.text("moneda"));
             enabled.put(id, on);
             prices.put(id, price);
+            minimumPrices.put(id, minimum);
             currencies.put(id, currency);
-            offersBox.getChildren().add(row(on, price, currency));
+            offersBox.getChildren().add(id == 1 && service.role() != 3
+                    ? row(on, price, currency, minimum) : row(on, price, currency));
         }
         Consumer<Boolean> save =
                 submit -> {
@@ -2142,7 +1857,9 @@ public final class AplicacionInmobiliaria extends Application {
                                             new ServicioInmobiliaria.Offer(
                                                     id,
                                                     money(prices.get(id).getText()),
-                                                    currencies.get(id).getValue()));
+                                                    currencies.get(id).getValue(),
+                                                    id == 1 && !minimumPrices.get(id).getText().isBlank()
+                                                            ? money(minimumPrices.get(id).getText()) : null));
                             });
                     int id = service.saveProperty(
                             savedPropertyId[0], f.values(), offers, checked(features), false);
@@ -2197,6 +1914,121 @@ public final class AplicacionInmobiliaria extends Application {
                                 label("Características adicionales", "section-title"),
                                 flow(features.values().toArray(Node[]::new))),
                         flow(propertyActions.toArray(Node[]::new)));
+    }
+
+    private void ownerRequestForm() {
+        page("Solicitar publicación", "Enviá los datos del inmueble para que un agente lo revise y administración decida su publicación.");
+        Formulario f = new Formulario();
+        f.text("titulo", "Título *", "");
+        f.rows("id_tipo_propiedad", "Tipo de propiedad *", service.lookup("tipos_propiedad"), 0, false);
+        f.text("direccion", "Dirección *", "");
+        f.text("localidad", "Localidad *", "");
+        f.text("superficie_total_m2", "Superficie total m² *", "");
+        f.text("ambientes", "Ambientes", "0");
+        f.text("dormitorios", "Dormitorios", "0");
+        f.text("banos", "Baños", "0");
+        f.text("antiguedad_anos", "Antigüedad (años)", "0");
+        f.area("descripcion", "Descripción *", "");
+        VBox offersBox = card(label("Operaciones y precios propuestos", "section-title"),
+                label("Podés proponer venta, alquiler o ambas operaciones. Cada una tiene su precio y moneda.", "subtitle"));
+        Map<Integer, CheckBox> enabled = new LinkedHashMap<>();
+        Map<Integer, TextField> prices = new HashMap<>();
+        Map<Integer, ComboBox<String>> currencies = new HashMap<>();
+        for (Registro type : service.lookup("tipos_transaccion")) {
+            int typeId = type.id("id");
+            CheckBox on = new CheckBox(type.text("etiqueta"));
+            TextField price = new TextField();
+            price.setPromptText("Precio");
+            ComboBox<String> currency = new ComboBox<>(FXCollections.observableArrayList("USD", "ARS"));
+            currency.setValue("USD");
+            enabled.put(typeId, on);
+            prices.put(typeId, price);
+            currencies.put(typeId, currency);
+            offersBox.getChildren().add(row(on, price, currency));
+        }
+        Map<Integer, CheckBox> features = featureChecks(Set.of());
+        Map<Path, String> pendingDocuments = new LinkedHashMap<>();
+        VBox documents = pendingDocumentsPanel(pendingDocuments);
+        List<Path> pendingMedia = new ArrayList<>();
+        Label mediaStatus = label("Todavía no seleccionaste fotos ni videos.", "subtitle");
+        mediaStatus.setWrapText(true);
+        VBox media = card(label("Fotos y videos", "section-title"),
+                label("Los archivos se guardarán en la carpeta local de la aplicación y quedarán asociados a la solicitud.", "subtitle"),
+                secondary("Seleccionar fotos o videos", () -> {
+                    FileChooser chooser = new FileChooser();
+                    chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Imágenes y videos", "*.jpg", "*.jpeg", "*.png", "*.webp", "*.mp4"));
+                    List<java.io.File> files = chooser.showOpenMultipleDialog(stage);
+                    if (files != null) files.forEach(file -> { if (!pendingMedia.contains(file.toPath())) pendingMedia.add(file.toPath()); });
+                    mediaStatus.setText(pendingMedia.isEmpty() ? "Todavía no seleccionaste fotos ni videos."
+                            : "Seleccionados: " + pendingMedia.stream().map(path -> path.getFileName().toString()).collect(java.util.stream.Collectors.joining(", ")));
+                }), mediaStatus);
+        CheckBox missingPlans = new CheckBox("Todavía no tengo los planos");
+        CheckBox missingDeed = new CheckBox("Todavía no tengo la escritura");
+        Formulario documentation = new Formulario(1);
+        documentation.area("observaciones_documentacion", "Aclaración sobre documentación pendiente", "");
+        List<ServicioInmobiliaria.PropertyTax> taxes = new ArrayList<>();
+        VBox taxPanel = pendingTaxesPanel(taxes);
+        content.getChildren().addAll(card(f), offersBox,
+                card(label("Características", "section-title"), flow(features.values().toArray(Node[]::new))),
+                media, documents,
+                card(label("Planos y escritura", "section-title"),
+                        label("Adjuntá ambos documentos o indicá cuál todavía no tenés.", "subtitle"),
+                        missingPlans, missingDeed, documentation),
+                taxPanel,
+                flow(button("Enviar solicitud", () -> {
+                    List<String> missing = new ArrayList<>();
+                    Map<String, String> values = f.values();
+                    Map<String, String> requiredFields = new LinkedHashMap<>();
+                    requiredFields.put("titulo", "Título");
+                    requiredFields.put("id_tipo_propiedad", "Tipo de propiedad");
+                    requiredFields.put("direccion", "Dirección");
+                    requiredFields.put("localidad", "Localidad");
+                    requiredFields.put("superficie_total_m2", "Superficie total");
+                    requiredFields.put("descripcion", "Descripción");
+                    requiredFields.forEach((key, name) -> {
+                        if (values.getOrDefault(key, "").isBlank()) missing.add(name);
+                    });
+
+                    boolean plansAttached = pendingDocuments.values().contains("Plano");
+                    boolean deedAttached = pendingDocuments.values().contains("Escritura");
+                    if (!plansAttached && !missingPlans.isSelected()) missing.add("Planos: adjuntá el archivo o marcá que todavía no los tenés");
+                    if (!deedAttached && !missingDeed.isSelected()) missing.add("Escritura: adjuntá el archivo o marcá que todavía no la tenés");
+                    List<ServicioInmobiliaria.Offer> proposed = new ArrayList<>();
+                    enabled.forEach((id, selected) -> {
+                        if (!selected.isSelected()) return;
+                        String operation = selected.getText();
+                        String rawPrice = prices.get(id).getText().trim();
+                        if (rawPrice.isBlank()) {
+                            missing.add("Precio de " + operation);
+                            return;
+                        }
+                        try {
+                            proposed.add(new ServicioInmobiliaria.Offer(id,
+                                    money(rawPrice), currencies.get(id).getValue()));
+                        } catch (NumberFormatException invalidPrice) {
+                            missing.add("Precio de " + operation + " (ingresá un número válido)");
+                        }
+                    });
+                    if (enabled.values().stream().noneMatch(CheckBox::isSelected))
+                        missing.add("Operación: elegí venta, alquiler o ambas");
+                    if (!missing.isEmpty())
+                        throw new IllegalArgumentException("Antes de enviar, completá o revisá:\n• "
+                                + String.join("\n• ", missing));
+                    int id = service.createOwnerRequest(f.values(), proposed, checked(features),
+                            missingPlans.isSelected(), missingDeed.isSelected(),
+                            documentation.value("observaciones_documentacion"));
+                    try {
+                        for (Path path : pendingMedia)
+                            service.attachOwnerRequest(id, path, path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".mp4") ? "Video" : "Imagen");
+                        for (Map.Entry<Path, String> doc : pendingDocuments.entrySet())
+                            service.attachOwnerRequest(id, doc.getKey(), doc.getValue());
+                        for (ServicioInmobiliaria.PropertyTax tax : taxes) service.saveOwnerRequestTax(id, tax);
+                    } catch (Exception error) {
+                        throw new IllegalArgumentException("La solicitud quedó creada, pero no se pudo adjuntar todo: " + error.getMessage(), error);
+                    }
+                    ownerRequestsPage();
+                    info("La solicitud quedó enviada para revisión.");
+                }), secondary("Cancelar", this::propertyList)));
     }
 
     private void stateForm(Registro p) {
@@ -2266,10 +2098,27 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void requests() {
+        if (service.role() == 3) {
+            ownerRequestsPage();
+            return;
+        }
         page(
                 "Solicitudes de publicación",
-                "Seguí cada envío y su revisión. Los rechazos incluyen el motivo para corregir la"
+                "Gestioná propuestas de propietarios y revisiones de fichas existentes. Los rechazos incluyen el motivo para corregir la"
                         + " ficha.");
+        TableView<Registro> proposals = table(service.ownerRequests(), "id_solicitud", "ID",
+                "titulo", "Propiedad propuesta", "cliente_nombre", "Propietario", "tipo", "Tipo",
+                "operacion", "Operación", "estado_nombre", "Estado", "agente", "Agente");
+        FlowPane proposalActions = flow(button("Ver solicitud", () -> ownerRequestDetails(selected(proposals).id("id_solicitud"))));
+        if (service.role() == 2) proposalActions.getChildren().add(secondary("Tomar sin asignar", () -> {
+            service.claimOwnerRequest(selected(proposals).id("id_solicitud"));
+            requests();
+        }));
+        if (service.role() == 1) proposalActions.getChildren().addAll(
+                secondary("Asignar agente", () -> assignOwnerRequest(selected(proposals).id("id_solicitud"))),
+                button("Aprobar y publicar", () -> reviewOwnerRequest(selected(proposals).id("id_solicitud"), true)),
+                secondary("Rechazar", () -> reviewOwnerRequest(selected(proposals).id("id_solicitud"), false)));
+        content.getChildren().add(card(label("Solicitudes de propietarios", "section-title"), proposals, proposalActions));
         TableView<Registro> t =
                 table(
                         service.requests(),
@@ -2298,6 +2147,85 @@ public final class AplicacionInmobiliaria extends Application {
                             secondary("Rechazar", () -> reviewForm(selected(t), false)));
         }
         content.getChildren().add(card(t, actions));
+    }
+
+    private void ownerRequestsPage() {
+        page("Mis solicitudes", "Seguí las propuestas de tus propiedades y revisá las observaciones de administración.");
+        TableView<Registro> requests = table(service.ownerRequests(), "id_solicitud", "ID", "titulo", "Propiedad",
+                "tipo", "Tipo", "operacion", "Operación", "estado_nombre", "Estado", "fecha_solicitud", "Enviada", "motivo_rechazo", "Observaciones");
+        content.getChildren().addAll(button("+ Nueva solicitud de publicación", this::ownerRequestForm),
+                card(requests, button("Ver solicitud", () -> ownerRequestDetails(selected(requests).id("id_solicitud")))));
+    }
+
+    private void ownerRequestDetails(int id) {
+        Registro request = service.ownerRequest(id);
+        page("Solicitud #" + id + " · " + request.text("titulo"),
+                request.text("cliente_nombre") + " " + request.text("cliente_apellido") + " · "
+                        + request.text("cliente_email") + " · " + request.text("estado_nombre"));
+        content.getChildren().add(card(label("Datos de la propiedad", "section-title"),
+                label(request.text("direccion") + " · " + request.text("localidad"), "subtitle"),
+                label("Tipo: " + request.text("tipo") + " · Superficie: " + request.text("superficie_total_m2")
+                        + " m² · Ambientes: " + request.text("ambientes") + " · Dormitorios: " + request.text("dormitorios")
+                        + " · Baños: " + request.text("banos") + " · Antigüedad: " + request.text("antiguedad_anos"), "subtitle"),
+                label(request.text("descripcion"), "subtitle"),
+                label("Operaciones y precios", "section-title"),
+                table(service.ownerRequestOffers(id), "operacion", "Operación", "precio", "Precio", "moneda", "Moneda"),
+                label("Características", "section-title"),
+                table(service.ownerRequestFeatures(id), "etiqueta", "Característica"),
+                label("Documentación pendiente: planos=" + (request.flag("faltan_planos") ? "sí" : "no")
+                        + " · escritura=" + (request.flag("falta_escritura") ? "sí" : "no"), "subtitle"),
+                label(request.text("observaciones_documentacion"), "subtitle")));
+        TableView<Registro> media = table(service.ownerRequestMedia(id), "tipo", "Tipo", "archivo", "Archivo");
+        content.getChildren().add(card(label("Fotos y videos", "section-title"), media,
+                secondary("Abrir archivo seleccionado", () -> openOwnerRequestFile(id, selected(media).id("id"), false))));
+        TableView<Registro> documents = table(service.ownerRequestDocuments(id), "tipo", "Tipo", "nombre", "Archivo", "fecha", "Fecha");
+        content.getChildren().add(card(label("Documentos privados", "section-title"), documents,
+                secondary("Abrir documento seleccionado", () -> openOwnerRequestFile(id, selected(documents).id("id"), true))));
+        List<Registro> taxes = service.ownerRequestTaxes(id);
+        content.getChildren().add(card(label("Impuestos", "section-title"), taxes.isEmpty()
+                ? label("No se adjuntaron cálculos de impuestos.", "subtitle")
+                : flow(taxes.stream().map(this::taxSummary).toArray(Node[]::new))));
+        List<Node> actions = new ArrayList<>();
+        if (service.role() == 2 && request.get("id_agente") == null)
+            actions.add(button("Tomar solicitud", () -> { service.claimOwnerRequest(id); ownerRequestDetails(id); }));
+        if (service.role() == 1 && request.id("id_estado_verificacion") == 2)
+            actions.addAll(List.of(secondary("Asignar agente", () -> assignOwnerRequest(id)),
+                    button("Aprobar y publicar", () -> reviewOwnerRequest(id, true)),
+                    secondary("Rechazar", () -> reviewOwnerRequest(id, false))));
+        actions.add(secondary("Volver", service.role() == 3 ? this::ownerRequestsPage : this::requests));
+        content.getChildren().add(flow(actions.toArray(Node[]::new)));
+    }
+
+    private void openOwnerRequestFile(int request, int file, boolean privateDocument) {
+        try {
+            Path path = service.ownerRequestFilePath(request, file, privateDocument);
+            if (!Files.isRegularFile(path)) throw new IllegalArgumentException("El archivo local no está disponible.");
+            getHostServices().showDocument(path.toUri().toString());
+        } catch (Exception e) { throw new IllegalArgumentException(e.getMessage(), e); }
+    }
+
+    private void assignOwnerRequest(int id) {
+        Formulario f = new Formulario();
+        f.rows("agent", "Agente responsable", service.agents(), 0, false);
+        dialog("Asignar solicitud #" + id, f, "Guardar", () -> {
+            service.assignOwnerRequest(id, number(f.value("agent")));
+            requests();
+        });
+    }
+
+    private void reviewOwnerRequest(int id, boolean approve) {
+        if (approve) {
+            dialog("Aprobar solicitud #" + id,
+                    label("La solicitud se convertirá en una propiedad publicada y sus archivos quedarán asociados a la ficha.", "subtitle"),
+                    "Aprobar y publicar", () -> { int property = service.approveOwnerRequest(id); propertyDetails(property); });
+        } else {
+            Formulario f = new Formulario(1);
+            f.area("reason", "Motivo del rechazo *", "");
+            dialog("Rechazar solicitud #" + id, f, "Guardar rechazo", () -> {
+                service.rejectOwnerRequest(id, f.value("reason"));
+                requests();
+            });
+        }
     }
 
     private void publicationChecklist(int property) {
@@ -2432,41 +2360,70 @@ public final class AplicacionInmobiliaria extends Application {
             c.setSelected(roles.contains(role));
             checks.put(role, c);
         }
-        Formulario assign = new Formulario();
+        ComboBox<Registro> assignedAgent = null;
+        if (service.role() == 1) {
+            Registro unassigned = new Registro();
+            unassigned.put("id", 0);
+            unassigned.put("etiqueta", "Sin asignar");
+            List<Registro> options = new ArrayList<>();
+            options.add(unassigned);
+            options.addAll(service.agents());
+            assignedAgent = new ComboBox<>(FXCollections.observableArrayList(options));
+            assignedAgent.setMaxWidth(Double.MAX_VALUE);
+            int currentAgent = client.get("id_agente_asignado") == null
+                    ? 0 : client.id("id_agente_asignado");
+            if (currentAgent != 0 && assignedAgent.getItems().stream()
+                    .noneMatch(agent -> agent.id("id") == currentAgent)) {
+                Registro inactive = new Registro();
+                inactive.put("id", currentAgent);
+                inactive.put("etiqueta", "Agente actual (inactivo) #" + currentAgent);
+                assignedAgent.getItems().add(inactive);
+            }
+            assignedAgent.getItems().stream()
+                    .filter(agent -> agent.id("id") == currentAgent)
+                    .findFirst()
+                    .ifPresent(assignedAgent.getSelectionModel()::select);
+        }
+        ComboBox<Registro> agentSelection = assignedAgent;
+        TableView<Registro> linkedAgents = table(service.linkedAgents(id),
+                "etiqueta", "Agente vinculado por actividad");
+        List<Node> clientCard = new ArrayList<>();
+        clientCard.add(label("Roles del cliente", "section-title"));
+        clientCard.add(flow(checks.values().toArray(Node[]::new)));
+        if (agentSelection != null) {
+            clientCard.add(label("Agente responsable", "section-title"));
+            clientCard.add(agentSelection);
+        }
+        List<Node> saveActions = new ArrayList<>();
+        saveActions.add(button(
+                "Guardar ficha",
+                () -> {
+                    Set<String> chosen = new HashSet<>();
+                    checks.forEach((k, c) -> {
+                        if (c.isSelected()) chosen.add(k);
+                    });
+                    Integer newAgent = client.get("id_agente_asignado") == null
+                            ? null : client.id("id_agente_asignado");
+                    if (agentSelection != null) {
+                        Registro selectedAgent = agentSelection.getValue();
+                        newAgent = selectedAgent == null || selectedAgent.id("id") == 0
+                                ? null : selectedAgent.id("id");
+                    }
+                    service.saveClient(id, chosen, newAgent);
+                    info("Ficha actualizada.");
+                    Registro refreshed = service.clients().stream()
+                            .filter(row -> row.id("id") == id)
+                            .findFirst().orElse(client);
+                    clientDetails(refreshed);
+                }));
         if (service.role() == 1)
-            assign.rows(
-                    "agent",
-                    "Agente asignado",
-                    service.agents(),
-                    client.id("id_agente_asignado"),
-                    true);
+            saveActions.add(secondary("Historial de asignaciones", () -> assignmentHistory(id)));
+        clientCard.add(flow(saveActions.toArray(Node[]::new)));
         content.getChildren()
                 .add(
-                        card(
-                                label("Roles del cliente", "section-title"),
-                                flow(checks.values().toArray(Node[]::new)),
-                                service.role() == 1
-                                        ? assign
-                                        : label(
-                                                "Agente asignado: "
-                                                        + service.current().text("nombre"),
-                                                "subtitle"),
-                                button(
-                                        "Guardar ficha",
-                                        () -> {
-                                            Set<String> chosen = new HashSet<>();
-                                            checks.forEach(
-                                                    (k, c) -> {
-                                                        if (c.isSelected()) chosen.add(k);
-                                                    });
-                                            int agent =
-                                                    service.role() == 1
-                                                            ? number(assign.value("agent"))
-                                                            : client.id("id_agente_asignado");
-                                            service.saveClient(
-                                                    id, chosen, agent == 0 ? null : agent);
-                                            info("Ficha actualizada.");
-                                        })));
+                        card(clientCard.toArray(Node[]::new)));
+        content.getChildren().add(card(label("Agentes vinculados por actividad", "section-title"),
+                linkedAgents));
         content.getChildren()
                 .add(
                         card(
@@ -2488,8 +2445,6 @@ public final class AplicacionInmobiliaria extends Application {
         List<Node> clientActions = new ArrayList<>(List.of(
                 button("Ver intereses", () -> interests(id)),
                 secondary("Perfil de búsqueda", () -> preferences(id))));
-        if (service.role() == 1)
-            clientActions.add(secondary("Historial de asignaciones", () -> assignmentHistory(id)));
         content.getChildren().add(flow(clientActions.toArray(Node[]::new)));
     }
 
@@ -2521,6 +2476,48 @@ public final class AplicacionInmobiliaria extends Application {
                             f.value("resultado"));
                     clients();
                 });
+    }
+
+    private void consultations() {
+        page("Consultas", "Revisá las consultas recibidas por propiedades y guardá la respuesta que el equipo dará al interesado.");
+        TableView<Registro> inquiries = table(service.consultations(), "fecha", "Fecha", "persona", "Persona",
+                "correo", "Correo", "telefono", "Teléfono", "propiedad", "Propiedad", "descripcion", "Consulta",
+                "resultado", "Respuesta", "estado", "Estado", "agente", "Agente");
+        content.getChildren().add(card(inquiries,
+                button("Responder / actualizar", () -> respondInquiry(selected(inquiries)))));
+        content.getChildren().add(label("Guardar una respuesta la registra en el sistema; no la envía por correo ni WhatsApp.", "subtitle"));
+    }
+
+    private void respondInquiry(Registro inquiry) {
+        Formulario f = new Formulario(1);
+        f.area("response", "Respuesta para guardar *", inquiry.text("resultado"));
+        f.choice("state", "Estado", inquiry.text("estado").isBlank() ? "Respondida" : inquiry.text("estado"),
+                "Respondida", "Cerrada");
+        dialog("Consulta #" + inquiry.id("id_contacto"), f, "Guardar", () -> {
+            service.respondInquiry(inquiry.id("id_contacto"), f.value("response"), f.value("state"));
+            consultations();
+        });
+    }
+
+    private void auditPage() {
+        if (service.role() != 1) throw new IllegalArgumentException("La auditoría completa es exclusiva de administración.");
+        page("Auditoría", "Acciones y cambios registrados por los usuarios del sistema.");
+        TabPane tabs = new TabPane();
+        tabs.getTabs().add(new Tab("Acciones", table(service.activity(), "fecha", "Fecha", "usuario", "Usuario",
+                "accion", "Acción", "entidad", "Entidad", "id_registro", "Registro", "detalle", "Detalle")));
+        tabs.getTabs().add(new Tab("Cambios", table(service.activityChanges(), "fecha", "Fecha", "usuario", "Usuario",
+                "entidad", "Entidad", "id_registro", "ID", "campo", "Campo", "valor_anterior", "Antes",
+                "valor_nuevo", "Después", "motivo", "Motivo")));
+        tabs.getTabs().add(new Tab("Estados", table(service.allStateHistory(), "fecha", "Fecha", "titulo", "Propiedad",
+                "usuario", "Usuario", "anterior", "Estado anterior", "nuevo", "Estado nuevo", "motivo", "Motivo")));
+        tabs.getTabs().add(new Tab("Precios", table(service.allPriceHistory(), "fecha", "Fecha", "titulo", "Propiedad",
+                "operacion", "Operación", "precio_anterior", "Antes", "precio_nuevo", "Después", "moneda", "Moneda",
+                "usuario", "Usuario", "motivo", "Motivo")));
+        tabs.getTabs().add(new Tab("Asignaciones", table(service.allAssignmentHistory(), "fecha", "Fecha", "tipo_entidad", "Tipo",
+                "id_entidad", "Registro", "agente_anterior_nombre", "Agente anterior", "agente_nuevo_nombre", "Agente nuevo",
+                "usuario_cambio", "Modificado por", "motivo", "Motivo")));
+        tabs.getTabs().forEach(tab -> tab.setClosable(false));
+        content.getChildren().add(tabs);
     }
 
     private void additionalContacts(int client) {
@@ -2678,11 +2675,13 @@ public final class AplicacionInmobiliaria extends Application {
     private void scheduleVisit(int client) {
         Formulario f = new Formulario();
         f.rows("property", "Propiedad", propertyChoices(false), 0, false);
+        if (service.role() == 1) f.rows("agent", "Agente responsable", service.agents(), 0, false);
         f.date("fecha", "Fecha", LocalDate.now().plusDays(1).toString());
         f.text("hora", "Hora (HH:mm)", "10:00");
         f.area("notes", "Observaciones", "");
         dialog("Agendar visita", f, "Guardar", () -> {
-            service.agendarVisita(client, number(f.value("property")), dateTime(f), f.value("notes"));
+            int agent = service.role() == 1 ? number(f.value("agent")) : service.current().id("id_usuario");
+            service.agendarVisita(client, number(f.value("property")), agent, dateTime(f), f.value("notes"));
             visits();
         });
     }
@@ -2700,6 +2699,7 @@ public final class AplicacionInmobiliaria extends Application {
     private void newFollowup() {
         Formulario f = new Formulario();
         f.rows("client", "Cliente", service.clients(), 0, false);
+        if (service.role() == 1) f.rows("agent", "Agente responsable", service.agents(), 0, false);
         f.rows("property", "Propiedad relacionada (opcional)", propertyChoices(false), 0, true);
         f.text("title", "Tarea *", "Contactar al cliente");
         f.date("fecha", "Fecha límite", LocalDate.now().toString());
@@ -2707,7 +2707,8 @@ public final class AplicacionInmobiliaria extends Application {
         f.area("detail", "Detalle", "");
         dialog("Nuevo recordatorio", f, "Guardar", () -> {
             int prop = number(f.value("property"));
-            service.crearTareaSeguimiento(number(f.value("client")), prop == 0 ? null : prop,
+            int agent = service.role() == 1 ? number(f.value("agent")) : service.current().id("id_usuario");
+            service.crearTareaSeguimiento(number(f.value("client")), prop == 0 ? null : prop, agent,
                     f.value("title"), f.value("detail"), dateTime(f));
             followups();
         });
@@ -2749,11 +2750,13 @@ public final class AplicacionInmobiliaria extends Application {
             if (service.role() == 2) offerActions.getChildren().add(button("Solicitar reserva", () -> reserve(selected(offerTable))));
         }
         TableView<Registro> reservationTable = table(service.reservasComerciales(), "id_reserva", "N.º", "propiedad", "Propiedad",
-                service.role() == 3 ? "agente" : "cliente", service.role() == 3 ? "Agente" : "Cliente", "fecha_limite", "Vencimiento", "estado", "Estado", "estado_pago", "Pago");
+                service.role() == 3 ? "agente" : "cliente", service.role() == 3 ? "Agente" : "Cliente",
+                "monto", "Importe", "moneda", "Moneda", "fecha_limite", "Vencimiento", "estado", "Estado", "estado_pago", "Pago");
         HBox reservationActions = new HBox(10);
         if (service.role() == 1) reservationActions.getChildren().addAll(
-                button("Aprobar reserva", () -> resolveReservation(selected(reservationTable), true)),
-                secondary("Rechazar reserva", () -> resolveReservation(selected(reservationTable), false)));
+                button("Autorizar reserva", () -> updateReservation(selected(reservationTable), "autorizar")),
+                secondary("Cancelar reserva", () -> updateReservation(selected(reservationTable), "cancelar")),
+                secondary("Actualizar pago", () -> updateReservation(selected(reservationTable), "pago")));
         content.getChildren().addAll(card(label("Ofertas recibidas", "section-title"), offerTable, offerActions),
                 card(label("Reservas", "section-title"), reservationTable, reservationActions));
     }
@@ -2778,8 +2781,17 @@ public final class AplicacionInmobiliaria extends Application {
         });
     }
 
-    private void resolveReservation(Registro reservation, boolean approve) {
-        service.resolverReserva(reservation.id("id_reserva"), approve);
+    private void updateReservation(Registro reservation, String action) {
+        if (action.equals("pago")) {
+            Formulario f = new Formulario();
+            f.choice("payment", "Estado de pago", reservation.text("estado_pago"), "Pendiente", "Pagado", "Rechazado");
+            dialog("Actualizar pago de reserva #" + reservation.id("id_reserva"), f, "Guardar", () -> {
+                service.actualizarReserva(reservation.id("id_reserva"), null, f.value("payment"));
+                offersAndReservations();
+            });
+            return;
+        }
+        service.actualizarReserva(reservation.id("id_reserva"), action, null);
         offersAndReservations();
     }
 
@@ -3116,20 +3128,17 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void agents() {
-        page("Agentes", "Consultá el equipo, su cartera asignada y el estado de sus cuentas.");
+        page("Agentes", "Consultá el equipo, sus clientes vinculados por actividad y el estado de sus cuentas.");
         TableView<Registro> t = table(new PanelAdministradorDAO(service.db).listAgents(),
                 "id_usuario", "ID", "agente", "Agente", "email", "Correo", "telefono", "Teléfono",
                 "clientes", "Clientes asignados", "propiedades", "Propiedades creadas", "activo", "Activo");
         content.getChildren().addAll(
                 row(button("+ Crear agente", () -> newUser(true)), secondary("Ver todos los usuarios", this::users)),
                 card(t, flow(
-                        button("Ver clientes asignados", () -> {
+                        button("Ver clientes vinculados", () -> {
                             Registro agent = selected(t);
-                            page("Cartera de " + agent.text("agente"), "Clientes asignados a este agente.");
-                            List<Registro> assigned = service.clients().stream()
-                                    .filter(client -> client.id("id_agente_asignado") == agent.id("id_usuario"))
-                                    .toList();
-                            TableView<Registro> clients = table(assigned, "id", "ID", "etiqueta", "Cliente", "email", "Correo", "telefono", "Teléfono");
+                            page("Clientes vinculados a " + agent.text("agente"), "La relación se forma por consultas, solicitudes, visitas, tareas, ofertas e inmuebles.");
+                            TableView<Registro> clients = table(service.clientsForAgent(agent.id("id_usuario")), "id", "ID", "etiqueta", "Cliente", "email", "Correo", "telefono", "Teléfono");
                             content.getChildren().add(card(clients, button("Ver ficha", () -> clientDetails(selected(clients)))));
                         }),
                         secondary("Activar / desactivar", () -> {

@@ -12,9 +12,6 @@ public final class ConexionBaseDatos {
     public final Path storage;
     public final Path webMediaRoot;
     public final String webMediaPrefix;
-    public final String cloudinaryCloudName;
-    public final String cloudinaryUploadPreset;
-    public final String privateMediaApiUrl;
 
     public ConexionBaseDatos() throws Exception {
         Properties p = new Properties();
@@ -36,24 +33,22 @@ public final class ConexionBaseDatos {
         webMediaRoot = webRoot.isEmpty() ? null : Path.of(webRoot).toAbsolutePath().normalize();
         String prefix = p.getProperty("media.web.prefix", "/Inmobiliaria/");
         webMediaPrefix = prefix.endsWith("/") ? prefix : prefix + "/";
-        cloudinaryCloudName = p.getProperty("cloudinary.cloud_name", "").trim();
-        cloudinaryUploadPreset = p.getProperty("cloudinary.upload_preset", "").trim();
-        privateMediaApiUrl = p.getProperty("private_media.api_url", "").trim().replaceAll("/+$", "");
         if (!webMediaPrefix.startsWith("/") || webMediaPrefix.equals("/"))
             throw new IllegalArgumentException("El prefijo multimedia debe identificar la carpeta de la web.");
     }
 
     public ConexionBaseDatos(String url, Path storage) {
+        this(url, storage, null, "/Inmobiliaria/");
+    }
+
+    public ConexionBaseDatos(String url, Path storage, Path webMediaRoot, String webMediaPrefix) {
         this.url = url;
         user = "sa";
         password = "";
         demo = true;
         this.storage = storage.toAbsolutePath().normalize();
-        webMediaRoot = null;
-        webMediaPrefix = "/Inmobiliaria/";
-        cloudinaryCloudName = "";
-        cloudinaryUploadPreset = "";
-        privateMediaApiUrl = "";
+        this.webMediaRoot = webMediaRoot == null ? null : webMediaRoot.toAbsolutePath().normalize();
+        this.webMediaPrefix = webMediaPrefix.endsWith("/") ? webMediaPrefix : webMediaPrefix + "/";
     }
 
     public Connection open() throws SQLException {

@@ -4,12 +4,12 @@ import ar.edu.nuevohogar.interfaz.paneles.ElementoMenuPanel;
 import java.util.List;
 
 /** Menú principal del panel de administración. */
-public final class  PanelAdministrador {
+public final class PanelAdministrador {
     private PanelAdministrador() {}
+
     public static List<ElementoMenuPanel> menu(Runnable... a) {
         return List.of(
                 ElementoMenuPanel.opcion("⌂|Inicio", a[0], true),
-                ElementoMenuPanel.opcion("▦|Catálogo", a[15], false),
                 ElementoMenuPanel.seccion("GESTIÓN"),
                 ElementoMenuPanel.opcion("♙|Clientes", a[1], false),
                 ElementoMenuPanel.opcion("⌂|Propiedades", a[2], false),
@@ -25,6 +25,8 @@ public final class  PanelAdministrador {
                 ElementoMenuPanel.opcion("♧|Notificaciones", a[11], false),
                 ElementoMenuPanel.opcion("▤|Propietarios y convenios", a[12], false),
                 ElementoMenuPanel.opcion("⌂|Edificios y unidades", a[13], false),
-                ElementoMenuPanel.opcion("⚙|Configuración", a[14], false));
+                ElementoMenuPanel.opcion("|Configuración", a[14], false),
+                ElementoMenuPanel.opcion("|Consultas", a[15], false),
+                ElementoMenuPanel.opcion("|Auditoría", a[16], false));
     }
 }
