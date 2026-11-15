@@ -390,6 +390,13 @@ public final class ServicioInmobiliaria {
         return properties(false, "", null, null, null, "USD", 0, 0, Set.of());
     }
 
+    public List<Registro> propertiesForAgent(int agent) {
+        require(1);
+        if (agents().stream().noneMatch(a -> a.id("id") == agent))
+            throw new IllegalArgumentException("El agente no existe o no está activo.");
+        return propiedadDao.findForAgent(agent).stream().map(Propiedad::toRow).toList();
+    }
+
     public Registro property(int id) {
         Registro p =
                 propiedadDao.findById(id)

@@ -3434,12 +3434,25 @@ public final class AplicacionInmobiliaria extends Application {
                             TableView<Registro> clients = table(service.clientsForAgent(agent.id("id_usuario")), "id", "ID", "etiqueta", "Cliente", "email", "Correo", "telefono", "Teléfono");
                             content.getChildren().add(card(clients, button("Ver ficha", () -> clientDetails(selected(clients)))));
                         }),
+                        secondary("Ver propiedades asignadas", () -> agentProperties(selected(t))),
                         secondary("Activar / desactivar", () -> {
                             Registro agent = selected(t);
                             boolean active = "1".equals(agent.text("activo")) || "true".equalsIgnoreCase(agent.text("activo"));
                             service.setActive(agent.id("id_usuario"), !active);
                             agents();
                         }))));
+    }
+
+    private void agentProperties(Registro agent) {
+        int agentId = agent.id("id_usuario");
+        page("Propiedades de " + agent.text("agente"),
+                "Inmuebles creados por el agente o pertenecientes a clientes asignados actualmente a él.");
+        TableView<Registro> properties = table(service.propertiesForAgent(agentId),
+                "id_propiedad", "ID", "titulo", "Propiedad", "localidad", "Localidad",
+                "propietario", "Propietario", "verificacion", "Verificación",
+                "comercial", "Estado comercial", "agente_responsable", "Agente responsable");
+        content.getChildren().add(card(properties,
+                secondary("Volver a agentes", this::agents)));
     }
 
     private void profile() {

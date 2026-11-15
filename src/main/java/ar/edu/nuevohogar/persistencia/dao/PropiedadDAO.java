@@ -99,6 +99,14 @@ public final class PropiedadDAO {
         return jdbc.list(sql.toString(), args.toArray()).stream().map(Propiedad::new).toList();
     }
 
+    public List<Propiedad> findForAgent(int agent) {
+        return jdbc.list(SELECT
+                        + " WHERE p.id_agente_creador=? OR EXISTS(SELECT 1 FROM clientes ca"
+                        + " WHERE ca.id_cliente=p.id_propietario AND ca.id_agente_asignado=?)"
+                        + " ORDER BY p.fecha_creacion DESC,p.id_propiedad DESC",
+                agent, agent).stream().map(Propiedad::new).toList();
+    }
+
     public Optional<Propiedad> findById(int id) {
         return jdbc.list(SELECT + " WHERE p.id_propiedad=?", id)
                 .stream()
