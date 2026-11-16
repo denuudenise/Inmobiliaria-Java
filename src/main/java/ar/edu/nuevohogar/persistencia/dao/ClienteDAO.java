@@ -27,8 +27,8 @@ public final class ClienteDAO {
                 + "OR EXISTS(SELECT 1 FROM tareas_seguimiento t WHERE t.id_cliente=u.id_usuario AND t.id_agente=?) "
                 + "OR EXISTS(SELECT 1 FROM solicitudes_publicacion s WHERE s.id_cliente=u.id_usuario AND s.id_agente=?) "
                 + "OR EXISTS(SELECT 1 FROM ofertas_cliente o WHERE o.id_cliente=u.id_usuario AND o.id_agente=?) "
-                + "OR EXISTS(SELECT 1 FROM propiedades p WHERE p.id_propietario=u.id_usuario AND p.id_agente_creador=?) "
-                + "OR EXISTS(SELECT 1 FROM intereses i JOIN propiedades p ON p.id_propiedad=i.id_propiedad WHERE i.id_cliente=u.id_usuario AND p.id_agente_creador=?) "
+                + "OR EXISTS(SELECT 1 FROM propiedades p WHERE p.id_propietario=u.id_usuario AND " + PropiedadDAO.responsibleAgentSql("p") + "=?) "
+                + "OR EXISTS(SELECT 1 FROM intereses i JOIN propiedades p ON p.id_propiedad=i.id_propiedad WHERE i.id_cliente=u.id_usuario AND " + PropiedadDAO.responsibleAgentSql("p") + "=?) "
                 + "ORDER BY u.apellido";
         return jdbc.list(sql, agentId, agentId, agentId, agentId, agentId, agentId, agentId, agentId)
                 .stream().map(Cliente::new).toList();

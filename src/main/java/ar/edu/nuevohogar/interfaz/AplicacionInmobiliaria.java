@@ -1788,6 +1788,8 @@ public final class AplicacionInmobiliaria extends Application {
                                     service.submit(selected(t).id("id_propiedad"));
                                     propertyList();
                                 }));
+        if (service.role() == 1)
+            actions.getChildren().add(secondary("Asignar agente", () -> assignProperty(selected(t))));
         if (service.role() != 3)
             actions.getChildren()
                     .addAll(
@@ -2485,6 +2487,18 @@ public final class AplicacionInmobiliaria extends Application {
             service.assignOwnerRequest(id, number(f.value("agent")));
             requests();
         });
+    }
+
+    private void assignProperty(Registro property) {
+        Formulario f = new Formulario();
+        f.rows("agent", "Agente responsable", service.agents(),
+                property.id("id_agente_responsable"), false);
+        dialog("Asignar agente · propiedad #" + property.id("id_propiedad"),
+                card(f, label("La asignación individual de esta propiedad prevalece sobre el agente del propietario.", "subtitle")),
+                "Guardar asignación", () -> {
+                    service.assignProperty(property.id("id_propiedad"), number(f.value("agent")));
+                    propertyList();
+                });
     }
 
     private void reviewOwnerRequest(int id, boolean approve) {
@@ -3489,7 +3503,7 @@ public final class AplicacionInmobiliaria extends Application {
     private void agentProperties(Registro agent) {
         int agentId = agent.id("id_usuario");
         page("Propiedades de " + agent.text("agente"),
-                "Inmuebles creados por el agente o pertenecientes a clientes asignados actualmente a él.");
+                "Inmuebles asignados a este agente, creados por él o vinculados a clientes de su cartera.");
         TableView<Registro> properties = table(service.propertiesForAgent(agentId),
                 "id_propiedad", "ID", "titulo", "Propiedad", "localidad", "Localidad",
                 "propietario", "Propietario", "verificacion", "Verificación",

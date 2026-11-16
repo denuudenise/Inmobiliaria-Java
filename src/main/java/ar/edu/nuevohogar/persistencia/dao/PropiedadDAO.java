@@ -15,13 +15,14 @@ public final class PropiedadDAO {
     private static final String SELECT =
             "SELECT p.*,t.nombre AS tipo,e.nombre AS verificacion,c.nombre AS comercial,"
                 + "CASE WHEN u.id_rol=1 THEN 'Admin' ELSE CONCAT(u.nombre,' ',u.apellido) END AS propietario,"
+                + responsibleAgentSql("p") + " AS id_agente_responsable,"
                 + "CONCAT(ua.nombre,' ',ua.apellido) AS agente_responsable FROM propiedades p "
                 + "JOIN tipos_propiedad t ON t.id_tipo_propiedad=p.id_tipo_propiedad "
                 + "JOIN estados_verificacion e ON e.id_estado_verificacion=p.id_estado_verificacion "
                 + "JOIN estados_comerciales c ON c.id_estado_comercial=p.id_estado_comercial "
                 + "LEFT JOIN usuarios u ON u.id_usuario=p.id_propietario "
                 + "LEFT JOIN clientes cl ON cl.id_cliente=p.id_propietario "
-                + "LEFT JOIN usuarios ua ON ua.id_usuario=COALESCE(cl.id_agente_asignado,p.id_agente_creador) ";
+                + "LEFT JOIN usuarios ua ON ua.id_usuario=" + responsibleAgentSql("p") + " ";
 
     private final ConsultasSQL jdbc;
 
@@ -49,10 +50,7 @@ public final class PropiedadDAO {
             sql.append(" AND p.id_propietario=?");
             args.add(actor);
         } else if (role == 2) {
-            sql.append(
-                    " AND (p.id_agente_creador=? OR EXISTS(SELECT 1 FROM clientes ca"
-                        + " WHERE ca.id_cliente=p.id_propietario AND ca.id_agente_asignado=?))");
-            args.add(actor);
+            sql.append(" AND ").append(responsibleAgentSql("p")).append("=?");
             args.add(actor);
         }
         if (query != null && !query.isBlank()) {
@@ -101,10 +99,18 @@ public final class PropiedadDAO {
 
     public List<Propiedad> findForAgent(int agent) {
         return jdbc.list(SELECT
-                        + " WHERE p.id_agente_creador=? OR EXISTS(SELECT 1 FROM clientes ca"
-                        + " WHERE ca.id_cliente=p.id_propietario AND ca.id_agente_asignado=?)"
+                        + " WHERE " + responsibleAgentSql("p") + "=?"
                         + " ORDER BY p.fecha_creacion DESC,p.id_propiedad DESC",
-                agent, agent).stream().map(Propiedad::new).toList();
+                agent).stream().map(Propiedad::new).toList();
+    }
+
+    /** Agente efectivo: asignación individual más reciente, responsable del propietario o creador. */
+    public static String responsibleAgentSql(String propertyAlias) {
+        return "COALESCE((SELECT ha.agente_nuevo FROM historial_asignaciones ha "
+                + "WHERE ha.tipo_entidad='PROPIEDAD' AND ha.id_entidad=" + propertyAlias + ".id_propiedad "
+                + "ORDER BY ha.fecha DESC,ha.id_asignacion DESC LIMIT 1),"
+                + "(SELECT ca.id_agente_asignado FROM clientes ca WHERE ca.id_cliente=" + propertyAlias + ".id_propietario),"
+                + propertyAlias + ".id_agente_creador)";
     }
 
     public Optional<Propiedad> findById(int id) {

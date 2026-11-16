@@ -333,8 +333,8 @@ public final class ServicioInmobiliaria {
                 + "OR EXISTS(SELECT 1 FROM tareas_seguimiento t WHERE t.id_cliente=? AND t.id_agente=a.id_usuario) "
                 + "OR EXISTS(SELECT 1 FROM solicitudes_publicacion s WHERE s.id_cliente=? AND s.id_agente=a.id_usuario) "
                 + "OR EXISTS(SELECT 1 FROM ofertas_cliente o WHERE o.id_cliente=? AND o.id_agente=a.id_usuario) "
-                + "OR EXISTS(SELECT 1 FROM propiedades p WHERE p.id_propietario=? AND p.id_agente_creador=a.id_usuario) "
-                + "OR EXISTS(SELECT 1 FROM intereses i JOIN propiedades p ON p.id_propiedad=i.id_propiedad WHERE i.id_cliente=? AND p.id_agente_creador=a.id_usuario) "
+                + "OR EXISTS(SELECT 1 FROM propiedades p WHERE p.id_propietario=? AND " + PropiedadDAO.responsibleAgentSql("p") + "=a.id_usuario) "
+                + "OR EXISTS(SELECT 1 FROM intereses i JOIN propiedades p ON p.id_propiedad=i.id_propiedad WHERE i.id_cliente=? AND " + PropiedadDAO.responsibleAgentSql("p") + "=a.id_usuario) "
                 + ") ORDER BY etiqueta", client, client, client, client, client, client, client, client);
     }
 
@@ -409,6 +409,31 @@ public final class ServicioInmobiliaria {
         return propiedadDao.findForAgent(agent).stream().map(Propiedad::toRow).toList();
     }
 
+    /** Reasigna una propiedad sin cambiar quién la creó ni alterar el esquema de la BD. */
+    public void assignProperty(int propertyId, int newAgent) {
+        int actor = require(1);
+        db.transaction(c -> {
+            if (!tableExists(c, "historial_asignaciones"))
+                throw new IllegalStateException("La base no tiene la tabla historial_asignaciones.");
+            Registro property = list(c,
+                    "SELECT p.id_propiedad," + PropiedadDAO.responsibleAgentSql("p") + " AS agente "
+                            + "FROM propiedades p WHERE p.id_propiedad=? FOR UPDATE", propertyId)
+                    .stream().findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("La propiedad no existe."));
+            if (list(c, "SELECT id_usuario FROM usuarios WHERE id_usuario=? AND id_rol=2 AND activo=1",
+                    newAgent).isEmpty())
+                throw new IllegalArgumentException("Elegí un agente activo.");
+            Integer previous = property.get("agente") == null ? null : property.id("agente");
+            if (Objects.equals(previous, newAgent)) return null;
+            exec(c, "INSERT INTO historial_asignaciones(tipo_entidad,id_entidad,agente_anterior,agente_nuevo,id_usuario_cambio,motivo) "
+                    + "VALUES('PROPIEDAD',?,?,?,?,?)",
+                    propertyId, previous, newAgent, actor, "Asignación individual desde Propiedades");
+            audit(c, actor, "Asignación de propiedad", "propiedades", propertyId,
+                    "Agente anterior: " + Objects.toString(previous, "Sin asignar") + "; agente nuevo: " + newAgent);
+            return null;
+        });
+    }
+
     public Registro property(int id) {
         Registro p =
                 propiedadDao.findById(id)
@@ -427,11 +452,9 @@ public final class ServicioInmobiliaria {
 
     private boolean agentCanAccessProperty(int agent, int property) {
         return !dao.list(
-                        "SELECT id_propiedad FROM propiedades p WHERE p.id_propiedad=? AND"
-                            + " (p.id_agente_creador=? OR EXISTS(SELECT 1 FROM clientes c WHERE"
-                            + " c.id_cliente=p.id_propietario AND c.id_agente_asignado=?))",
+                        "SELECT id_propiedad FROM propiedades p WHERE p.id_propiedad=? AND "
+                            + PropiedadDAO.responsibleAgentSql("p") + "=?",
                         property,
-                        agent,
                         agent)
                 .isEmpty();
     }
@@ -440,11 +463,9 @@ public final class ServicioInmobiliaria {
             throws SQLException {
         return !list(
                         connection,
-                        "SELECT id_propiedad FROM propiedades p WHERE p.id_propiedad=? AND"
-                            + " (p.id_agente_creador=? OR EXISTS(SELECT 1 FROM clientes c WHERE"
-                            + " c.id_cliente=p.id_propietario AND c.id_agente_asignado=?))",
+                        "SELECT id_propiedad FROM propiedades p WHERE p.id_propiedad=? AND "
+                            + PropiedadDAO.responsibleAgentSql("p") + "=?",
                         property,
-                        agent,
                         agent)
                 .isEmpty();
     }
@@ -1174,9 +1195,7 @@ public final class ServicioInmobiliaria {
         int actor = require(1, 2);
         String scope =
                 role() == 2
-                        ? "WHERE p.id_agente_creador=? OR EXISTS(SELECT 1 FROM clientes cp"
-                                + " WHERE cp.id_cliente=p.id_propietario AND"
-                                + " cp.id_agente_asignado=?) OR EXISTS(SELECT 1 FROM clientes cc"
+                        ? "WHERE " + PropiedadDAO.responsibleAgentSql("p") + "=? OR c.id_agente_cierre=? OR EXISTS(SELECT 1 FROM clientes cc"
                                 + " WHERE cc.id_cliente=c.id_cliente_comprador AND"
                                 + " cc.id_agente_asignado=?) "
                         : "";
@@ -1197,7 +1216,7 @@ public final class ServicioInmobiliaria {
     public List<Registro> alquileresActivos() {
         int actor = require(1, 2);
         String scope = role() == 2
-                ? " AND (c.id_agente_cierre=? OR p.id_agente_creador=? OR EXISTS(SELECT 1 FROM clientes cl "
+                ? " AND (c.id_agente_cierre=? OR " + PropiedadDAO.responsibleAgentSql("p") + "=? OR EXISTS(SELECT 1 FROM clientes cl "
                         + "WHERE cl.id_cliente=c.id_cliente_comprador AND cl.id_agente_asignado=?))"
                 : "";
         Object[] args = role() == 2 ? new Object[] {actor, actor, actor} : new Object[] {};
@@ -1392,7 +1411,8 @@ public final class ServicioInmobiliaria {
     }
 
     private int responsibleAgent(Registro property) {
-        int agent = property.id("id_agente_creador");
+        int agent = property.id("id_agente_responsable");
+        if (agent <= 0) agent = property.id("id_agente_creador");
         if (agent <= 0 && property.get("id_propietario") != null) {
             Registro assignment = dao.list(
                     "SELECT id_agente_asignado AS id FROM clientes WHERE id_cliente=?",
@@ -1411,7 +1431,7 @@ public final class ServicioInmobiliaria {
                 + "COALESCE(u.telefono,c.telefono_contacto) AS telefono,CONCAT(a.nombre,' ',a.apellido) AS agente "
                 + "FROM contactos c LEFT JOIN usuarios u ON u.id_usuario=c.id_cliente "
                 + "JOIN usuarios a ON a.id_usuario=c.id_agente LEFT JOIN propiedades p ON p.id_propiedad=c.id_propiedad "
-                + "WHERE c.tipo='Consulta' " + (role() == 2 ? "AND (c.id_agente=? OR p.id_agente_creador=?) " : "")
+                + "WHERE c.tipo='Consulta' " + (role() == 2 ? "AND (c.id_agente=? OR " + PropiedadDAO.responsibleAgentSql("p") + "=?) " : "")
                 + "ORDER BY CASE WHEN c.estado='Pendiente' THEN 0 ELSE 1 END,c.fecha DESC",
                 role() == 2 ? new Object[] {actor, actor} : new Object[] {});
     }
@@ -1426,8 +1446,11 @@ public final class ServicioInmobiliaria {
         db.transaction(c -> {
             Registro inquiry = list(c, "SELECT * FROM contactos WHERE id_contacto=? AND tipo='Consulta' FOR UPDATE", id)
                     .stream().findFirst().orElseThrow(() -> new IllegalArgumentException("La consulta no existe."));
-            if (role() == 2 && inquiry.id("id_agente") != actor)
-                throw new IllegalArgumentException("La consulta no está asignada a tu usuario.");
+            if (role() == 2 && inquiry.id("id_agente") != actor) {
+                Integer property = inquiry.get("id_propiedad") == null ? null : inquiry.id("id_propiedad");
+                if (property == null || !agentCanAccessProperty(c, actor, property))
+                    throw new IllegalArgumentException("La consulta no está asignada a tu usuario.");
+            }
             exec(c, "UPDATE contactos SET resultado=?,estado=?,fecha_respuesta=NOW() WHERE id_contacto=?", answer, state, id);
             audit(c, actor, state.equals("Cerrada") ? "Cerrar consulta" : "Responder consulta", "contactos", id, answer);
             return null;
@@ -1915,8 +1938,8 @@ public final class ServicioInmobiliaria {
                 + "OR EXISTS(SELECT 1 FROM tareas_seguimiento t WHERE t.id_cliente=c.id_cliente AND t.id_agente=?) "
                 + "OR EXISTS(SELECT 1 FROM solicitudes_publicacion s WHERE s.id_cliente=c.id_cliente AND s.id_agente=?) "
                 + "OR EXISTS(SELECT 1 FROM ofertas_cliente o WHERE o.id_cliente=c.id_cliente AND o.id_agente=?) "
-                + "OR EXISTS(SELECT 1 FROM propiedades p WHERE p.id_propietario=c.id_cliente AND p.id_agente_creador=?) "
-                + "OR EXISTS(SELECT 1 FROM intereses i JOIN propiedades p ON p.id_propiedad=i.id_propiedad WHERE i.id_cliente=c.id_cliente AND p.id_agente_creador=?))",
+                + "OR EXISTS(SELECT 1 FROM propiedades p WHERE p.id_propietario=c.id_cliente AND " + PropiedadDAO.responsibleAgentSql("p") + "=?) "
+                + "OR EXISTS(SELECT 1 FROM intereses i JOIN propiedades p ON p.id_propiedad=i.id_propiedad WHERE i.id_cliente=c.id_cliente AND " + PropiedadDAO.responsibleAgentSql("p") + "=?))",
                 client, agent, agent, agent, agent, agent, agent, agent, agent).isEmpty();
     }
 
@@ -1999,10 +2022,10 @@ public final class ServicioInmobiliaria {
                 String message = "Alerta de seguimiento: cliente #" + row.id("id_cliente") + " lleva " + days.get("dias_cliente_sin_contacto") + " días sin contacto.";
                 generated += notificarSiNoExiste(c, row.id("id_agente_asignado"), message);
             }
-            String propertyScope = role() == 2 ? " AND (p.id_agente_creador=? OR cl.id_agente_asignado=?)" : "";
+            String propertyScope = role() == 2 ? " AND " + PropiedadDAO.responsibleAgentSql("p") + "=?" : "";
             LocalDate propertyCutoff = LocalDate.now().minusDays(days.get("dias_propiedad_sin_actividad"));
-            Object[] propertyArgs = role() == 2 ? new Object[] {propertyCutoff, actor, actor} : new Object[] {propertyCutoff};
-            for (Registro row : list(c, "SELECT p.id_propiedad,COALESCE(p.id_agente_creador,cl.id_agente_asignado) AS agente "
+            Object[] propertyArgs = role() == 2 ? new Object[] {propertyCutoff, actor} : new Object[] {propertyCutoff};
+            for (Registro row : list(c, "SELECT p.id_propiedad," + PropiedadDAO.responsibleAgentSql("p") + " AS agente "
                     + "FROM propiedades p LEFT JOIN clientes cl ON cl.id_cliente=p.id_propietario "
                     + "WHERE p.id_estado_verificacion=3 AND p.id_estado_comercial=1 "
                     + "AND CAST(COALESCE((SELECT MAX(h.fecha) FROM historial_estados h WHERE h.id_propiedad=p.id_propiedad),p.fecha_creacion) AS DATE)<=?" + propertyScope, propertyArgs)) {

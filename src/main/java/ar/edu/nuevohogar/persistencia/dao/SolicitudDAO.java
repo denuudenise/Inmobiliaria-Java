@@ -16,15 +16,13 @@ public final class SolicitudDAO {
     public List<SolicitudPublicacion> listForRole(int roleId, int userId) {
         String scope =
                 switch (roleId) {
-                    case 2 -> "WHERE p.id_agente_creador=? OR EXISTS(SELECT 1 FROM clientes ca"
-                            + " WHERE ca.id_cliente=p.id_propietario AND"
-                            + " ca.id_agente_asignado=?) ";
+                    case 2 -> "WHERE " + PropiedadDAO.responsibleAgentSql("p") + "=? ";
                     case 3 -> "WHERE p.id_propietario=? ";
                     default -> "";
                 };
         Object[] args =
                 switch (roleId) {
-                    case 2 -> new Object[] {userId, userId};
+                    case 2 -> new Object[] {userId};
                     case 3 -> new Object[] {userId};
                     default -> new Object[] {};
                 };
