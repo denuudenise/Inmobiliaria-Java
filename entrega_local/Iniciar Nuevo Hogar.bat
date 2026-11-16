@@ -1,4 +1,4 @@
 @echo off
 cd /d "%~dp0"
-java -jar "nuevo-hogar.jar"
+java -cp "nuevo-hogar.jar" ar.edu.nuevohogar.Main
 pause
