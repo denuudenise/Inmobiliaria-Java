@@ -55,7 +55,7 @@ function media_password_matches(string $password, string $hash): bool
 function media_context(PDO $db, string $target, int $id, array $user): array
 {
     if ($target === 'propiedad') {
-        $q = $db->prepare('SELECT p.id_propietario,p.id_agente_creador,p.id_estado_verificacion,c.id_agente_asignado '
+        $q = $db->prepare('SELECT p.id_propietario,p.id_agente_creador,p.id_estado_verificacion,p.id_estado_comercial,c.id_agente_asignado '
             . 'FROM propiedades p LEFT JOIN clientes c ON c.id_cliente=p.id_propietario WHERE p.id_propiedad=?');
         $q->execute([$id]);
         $row = $q->fetch();
@@ -191,10 +191,11 @@ try {
     $context = media_context($db, $target, $id, $user);
     if ($target === 'propiedad') {
         $status = (int)$context['id_estado_verificacion'];
-        if ($isMedia && !in_array($status, [1, 4], true))
+        if ($isMedia && !in_array($status, [1, 4], true)
+            && !($user['role'] !== 'Cliente' && $status === 3
+                && in_array((int)$context['id_estado_comercial'], [1, 2, 5], true)))
             throw new RuntimeException('Guardá la propiedad como borrador antes de cargar fotos o videos.');
-        if ($isDocument && !in_array($status, [1, 4], true)
-            && !($user['role'] !== 'Cliente' && $status === 2))
+        if ($isDocument && $user['role'] === 'Cliente' && !in_array($status, [1, 4], true))
             throw new RuntimeException('Guardá la propiedad como borrador antes de adjuntar documentación.');
     }
     if ($target === 'solicitud') {

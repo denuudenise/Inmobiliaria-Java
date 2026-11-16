@@ -16,6 +16,8 @@ public record DatosPanelAdministrador(
         long rentedProperties,
         long pendingRequests,
         long closedOperations,
+        long pendingOwnerRequests,
+        long pendingConsultations,
         Map<String, Long> propertyStates,
         Map<String, Long> propertyTypes,
         Map<String, Long> requestStates,

@@ -1439,7 +1439,7 @@ public final class AplicacionInmobiliaria extends Application {
                         throw new IllegalArgumentException("Seleccioná un archivo.");
                     try {
                         service.attach(id, path[0], f.value("tipo"));
-                        propertyDetails(id);
+                        propertyFiles(id);
                     } catch (Exception e) {
                         throw new IllegalArgumentException(e.getMessage(), e);
                     }
@@ -1606,15 +1606,11 @@ public final class AplicacionInmobiliaria extends Application {
 
         FlowPane metrics = new FlowPane(14, 14);
         metrics.getStyleClass().add("admin-metrics");
-        long pendingOwnerRequests = service.ownerRequests().stream()
-                .filter(request -> request.id("id_estado_verificacion") == 2).count();
-        long pendingConsultations = service.consultations().stream()
-                .filter(inquiry -> inquiry.text("estado").equals("Pendiente")).count();
         metrics.getChildren().addAll(
                 adminMetric("♙", "Clientes registrados", data.clients(), "Personas en la cartera", "blue"),
                 adminMetric("▤", "Solicitudes pendientes", data.pendingRequests(), "Requieren revisión", "gold"),
-                adminMetric("⌂", "Propuestas de propietarios", pendingOwnerRequests, "Esperan asignación o decisión", "gold"),
-                adminMetric("✉", "Consultas pendientes", pendingConsultations, "Requieren respuesta del equipo", "teal"),
+                adminMetric("⌂", "Propuestas de propietarios", data.pendingOwnerRequests(), "Esperan asignación o decisión", "gold"),
+                adminMetric("✉", "Consultas pendientes", data.pendingConsultations(), "Requieren respuesta del equipo", "teal"),
                 adminMetric("↗", "Operaciones cerradas", data.closedOperations(), "Ventas y alquileres", "blue"),
                 adminMetric("⌂", "Alquileres activos", data.rentedProperties(), "Propiedades alquiladas", "violet"),
                 adminMetric("♙", "Agentes activos", data.agents(), "" + data.totalUsers() + " usuarios activos", "teal"));
@@ -1822,6 +1818,8 @@ public final class AplicacionInmobiliaria extends Application {
                     label("Planos, escrituras y otros documentos", "section-title"),
                     label("Archivos privados: solo visibles para el propietario, administración y el agente responsable.", "subtitle"));
             addFileButtons(documents, id, true);
+            if (service.role() != 3)
+                documents.getChildren().add(secondary("Subir documentación", () -> upload(id, true)));
             content.getChildren().add(documents);
         }
     }
@@ -1913,6 +1911,10 @@ public final class AplicacionInmobiliaria extends Application {
                     }
                     refreshMedia.run();
                 }));
+        if (edit && service.role() != 3)
+            mediaBox.getChildren().add(secondary(
+                    "Subir foto o video ahora (sin editar la operación)",
+                    () -> upload(p.id("id_propiedad"), false)));
         Map<Path, String> pendingDocuments = new LinkedHashMap<>();
         List<ServicioInmobiliaria.PropertyTax> pendingTaxes = new ArrayList<>();
         VBox documentsBox = pendingDocumentsPanel(pendingDocuments);
@@ -1920,6 +1922,10 @@ public final class AplicacionInmobiliaria extends Application {
         if (edit) {
             documentsBox.getChildren().add(label("Documentos ya guardados · tocá un archivo para abrirlo", "section-title"));
             addFileButtons(documentsBox, p.id("id_propiedad"), true);
+            if (service.role() != 3)
+                documentsBox.getChildren().add(secondary(
+                        "Subir documento ahora (sin editar la operación)",
+                        () -> upload(p.id("id_propiedad"), true)));
             for (Registro tax : service.propertyTaxes(p.id("id_propiedad"))) taxesBox.getChildren().add(taxSummary(tax));
         }
         VBox offersBox =
@@ -2008,7 +2014,7 @@ public final class AplicacionInmobiliaria extends Application {
                         if (service.role() == 1) service.publishDirectly(id);
                         else service.submit(id);
                     }
-                    propertyDetails(id);
+                    propertyFiles(id);
                 };
         List<Node> propertyActions = new ArrayList<>();
         if (service.role() == 1) {

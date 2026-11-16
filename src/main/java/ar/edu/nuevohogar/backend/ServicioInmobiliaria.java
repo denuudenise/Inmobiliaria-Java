@@ -499,7 +499,8 @@ public final class ServicioInmobiliaria {
         int type = integer(d, "id_tipo_propiedad", 1, 1000),
                 owner = role() == 3 ? actor : integer(d, "id_propietario", 1, Integer.MAX_VALUE);
         BigDecimal surface = decimal(d, "superficie_total_m2", true),
-                covered = decimal(d, "superficie_cubierta_m2", false);
+                covered = optional(d, "superficie_cubierta_m2").isBlank()
+                        ? BigDecimal.ZERO : decimal(d, "superficie_cubierta_m2", false);
         if (surface.compareTo(new BigDecimal("999999.99")) > 0 || covered.compareTo(surface) > 0)
             throw new IllegalArgumentException(
                     "Revisá las superficies: la cubierta no puede superar a la total.");
@@ -2299,8 +2300,12 @@ public final class ServicioInmobiliaria {
     }
 
     private void validateAttachmentState(Registro property, boolean media) {
-        if (!Set.of(1, 4).contains(property.id("id_estado_verificacion"))
-                && !(!media && role() != 3 && property.id("id_estado_verificacion") == 2))
+        // La administración y los agentes responsables pueden completar el expediente privado
+        // incluso después del cierre comercial; esto no cambia la operación ni la publicación.
+        if (!media && role() != 3) return;
+        if (media && role() != 3 && property.id("id_estado_verificacion") == 3
+                && Set.of(1, 2, 5).contains(property.id("id_estado_comercial"))) return;
+        if (!Set.of(1, 4).contains(property.id("id_estado_verificacion")))
             throw new IllegalArgumentException(
                     "Guardá la propiedad como borrador antes de cambiar sus archivos.");
     }

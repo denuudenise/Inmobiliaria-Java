@@ -8,34 +8,35 @@ import java.util.Map;
 
 /** Consultas agrupadas y listados recientes del tablero de administración. */
 public final class PanelAdministradorDAO {
-    private final ConsultasSQL jdbc;
+    private final ConexionBaseDatos database;
 
     public PanelAdministradorDAO(ConexionBaseDatos database) {
-        jdbc = new ConsultasSQL(database);
+        this.database = database;
     }
 
     public DatosPanelAdministrador load() {
-        List<Registro> propertyStates = jdbc.list(
+        try (var c = database.open()) {
+        List<Registro> propertyStates = ConsultasSQL.list(c,
                 "SELECT e.nombre AS etiqueta,COUNT(p.id_propiedad) AS cantidad"
                     + " FROM estados_verificacion e LEFT JOIN propiedades p ON"
                     + " p.id_estado_verificacion=e.id_estado_verificacion"
                     + " GROUP BY e.id_estado_verificacion,e.nombre ORDER BY e.id_estado_verificacion");
-        List<Registro> propertyTypes = jdbc.list(
+        List<Registro> propertyTypes = ConsultasSQL.list(c,
                 "SELECT t.nombre AS etiqueta,COUNT(p.id_propiedad) AS cantidad"
                     + " FROM tipos_propiedad t LEFT JOIN propiedades p ON"
                     + " p.id_tipo_propiedad=t.id_tipo_propiedad"
                     + " GROUP BY t.id_tipo_propiedad,t.nombre ORDER BY cantidad DESC,t.nombre");
-        List<Registro> requestStates = jdbc.list(
+        List<Registro> requestStates = ConsultasSQL.list(c,
                 "SELECT estado AS etiqueta,COUNT(*) AS cantidad FROM publicaciones"
                     + " GROUP BY estado ORDER BY cantidad DESC,estado");
-        List<Registro> latestRequests = jdbc.list(
+        List<Registro> latestRequests = ConsultasSQL.list(c,
                 "SELECT s.id_publicacion,s.id_propiedad,p.titulo,p.localidad,s.estado,"
                     + "s.fecha_solicitud AS fecha,"
                     + "CASE WHEN u.id_rol=1 THEN 'Admin' ELSE CONCAT(u.nombre,' ',u.apellido) END AS solicitante"
                     + " FROM publicaciones s JOIN propiedades p ON p.id_propiedad=s.id_propiedad"
                     + " JOIN usuarios u ON u.id_usuario=s.id_solicitante"
                     + " ORDER BY s.fecha_solicitud DESC,s.id_publicacion DESC LIMIT 6");
-        List<Registro> latestProperties = jdbc.list(
+        List<Registro> latestProperties = ConsultasSQL.list(c,
                 "SELECT p.id_propiedad,p.titulo,p.localidad,e.nombre AS verificacion,"
                     + "c.nombre AS comercial,CASE WHEN u.id_rol=1 THEN 'Admin' ELSE"
                     + " CONCAT_WS(' ',u.nombre,u.apellido) END AS propietario"
@@ -43,7 +44,7 @@ public final class PanelAdministradorDAO {
                     + " e.id_estado_verificacion=p.id_estado_verificacion JOIN estados_comerciales c"
                     + " ON c.id_estado_comercial=p.id_estado_comercial LEFT JOIN usuarios u ON"
                     + " u.id_usuario=p.id_propietario ORDER BY p.fecha_creacion DESC,p.id_propiedad DESC LIMIT 5");
-        List<Registro> agents = jdbc.list(
+        List<Registro> agents = ConsultasSQL.list(c,
                 "SELECT u.id_usuario,CONCAT(u.nombre,' ',u.apellido) AS agente,"
                     + "COUNT(DISTINCT c.id_cliente) AS clientes,"
                     + "COUNT(DISTINCT p.id_propiedad) AS propiedades"
@@ -58,7 +59,7 @@ public final class PanelAdministradorDAO {
                     + " LEFT JOIN propiedades p ON p.id_agente_creador=u.id_usuario"
                     + " WHERE u.id_rol=2 AND u.activo=1 GROUP BY u.id_usuario,u.nombre,u.apellido"
                     + " ORDER BY clientes DESC,propiedades DESC,u.apellido LIMIT 5");
-        List<Registro> activity = jdbc.list(
+        List<Registro> activity = ConsultasSQL.list(c,
                 "SELECT a.accion,a.entidad,a.id_registro,a.detalle,"
                     + "a.fecha AS fecha,"
                     + "CASE WHEN u.id_rol=1 THEN 'Admin' ELSE CONCAT(u.nombre,' ',u.apellido) END AS usuario"
@@ -66,17 +67,19 @@ public final class PanelAdministradorDAO {
                     + " ORDER BY a.fecha DESC,a.id_evento DESC LIMIT 6");
 
         return new DatosPanelAdministrador(
-                count("SELECT COUNT(*) AS cantidad FROM clientes"),
-                count("SELECT COUNT(*) AS cantidad FROM usuarios WHERE id_rol=2 AND activo=1"),
-                count("SELECT COUNT(*) AS cantidad FROM usuarios WHERE activo=1"),
-                count("SELECT COUNT(*) AS cantidad FROM propiedades"),
-                count("SELECT COUNT(*) AS cantidad FROM propiedades WHERE id_estado_verificacion=3"),
-                count("SELECT COUNT(*) AS cantidad FROM propiedades WHERE id_estado_verificacion=2"),
-                count("SELECT COUNT(*) AS cantidad FROM propiedades WHERE id_estado_verificacion=4"),
-                count("SELECT COUNT(*) AS cantidad FROM propiedades WHERE id_estado_comercial=3"),
-                count("SELECT COUNT(*) AS cantidad FROM propiedades WHERE id_estado_comercial=4"),
-                count("SELECT COUNT(*) AS cantidad FROM publicaciones WHERE estado='Pendiente'"),
-                count("SELECT COUNT(*) AS cantidad FROM propiedades_cerradas"),
+                count(c, "SELECT COUNT(*) AS cantidad FROM clientes"),
+                count(c, "SELECT COUNT(*) AS cantidad FROM usuarios WHERE id_rol=2 AND activo=1"),
+                count(c, "SELECT COUNT(*) AS cantidad FROM usuarios WHERE activo=1"),
+                count(c, "SELECT COUNT(*) AS cantidad FROM propiedades"),
+                count(c, "SELECT COUNT(*) AS cantidad FROM propiedades WHERE id_estado_verificacion=3"),
+                count(c, "SELECT COUNT(*) AS cantidad FROM propiedades WHERE id_estado_verificacion=2"),
+                count(c, "SELECT COUNT(*) AS cantidad FROM propiedades WHERE id_estado_verificacion=4"),
+                count(c, "SELECT COUNT(*) AS cantidad FROM propiedades WHERE id_estado_comercial=3"),
+                count(c, "SELECT COUNT(*) AS cantidad FROM propiedades WHERE id_estado_comercial=4"),
+                count(c, "SELECT COUNT(*) AS cantidad FROM publicaciones WHERE estado='Pendiente'"),
+                count(c, "SELECT COUNT(*) AS cantidad FROM propiedades_cerradas"),
+                count(c, "SELECT COUNT(*) AS cantidad FROM solicitudes_publicacion WHERE id_estado_verificacion=2"),
+                count(c, "SELECT COUNT(*) AS cantidad FROM contactos WHERE tipo='Consulta' AND estado='Pendiente'"),
                 asMap(propertyStates),
                 asMap(propertyTypes),
                 asMap(requestStates),
@@ -84,10 +87,13 @@ public final class PanelAdministradorDAO {
                 latestProperties,
                 agents,
                 activity);
+        } catch (java.sql.SQLException e) {
+            throw new IllegalStateException("No se pudo cargar el resumen de administración.", e);
+        }
     }
 
     public List<Registro> listAgents() {
-        return jdbc.list(
+        try (var c = database.open()) { return ConsultasSQL.list(c,
                 "SELECT u.id_usuario,CONCAT(u.nombre,' ',u.apellido) AS agente,u.email,u.telefono,"
                     + "u.activo,COUNT(DISTINCT c.id_cliente) AS clientes,"
                     + "COUNT(DISTINCT p.id_propiedad) AS propiedades"
@@ -102,10 +108,13 @@ public final class PanelAdministradorDAO {
                     + " LEFT JOIN propiedades p ON p.id_agente_creador=u.id_usuario"
                     + " WHERE u.id_rol=2 GROUP BY u.id_usuario,u.nombre,u.apellido,u.email,u.telefono,u.activo"
                     + " ORDER BY u.activo DESC,u.apellido,u.nombre");
+        } catch (java.sql.SQLException e) {
+            throw new IllegalStateException("No se pudo cargar el equipo de agentes.", e);
+        }
     }
 
-    private long count(String sql) {
-        return jdbc.list(sql).getFirst().id("cantidad");
+    private long count(java.sql.Connection c, String sql) throws java.sql.SQLException {
+        return ConsultasSQL.list(c, sql).getFirst().id("cantidad");
     }
 
     private static Map<String, Long> asMap(List<Registro> rows) {
