@@ -1,0 +1,15 @@
+NUEVO HOGAR - VERSION PORTATIL PARA WINDOWS
+
+No requiere instalar Java ni XAMPP. El runtime de Java 25 ya viene en la carpeta.
+
+1. Extrae la carpeta completa del ZIP.
+2. Abre "Iniciar Nuevo Hogar.bat".
+3. La aplicación usa la base remota indicada en config.properties.
+4. La multimedia nueva se guarda localmente en data/archivos junto a esta carpeta.
+
+La computadora necesita Internet y acceso al servidor MySQL. Esta modalidad
+local guarda adjuntos solo en esta PC. Para multimedia compartida, Torga debe
+restablecer el servidor y configurar la API remota.
+
+No compartas config.properties ni este paquete con personas no autorizadas:
+contiene la credencial de conexión a la base de datos.

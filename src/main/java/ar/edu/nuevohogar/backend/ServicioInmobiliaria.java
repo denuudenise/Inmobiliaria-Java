@@ -30,6 +30,7 @@ public final class ServicioInmobiliaria {
     private final SolicitudPropiedadDAO solicitudPropiedadDao;
     private final GestionComercialDAO gestionDao;
     private final MultimediaDAO multimediaDao;
+    private final MediaApiClient mediaApi;
     private Integer sessionId;
     private static final String PROPERTY =
             "SELECT p.*,t.nombre AS tipo,e.nombre AS verificacion,c.nombre AS"
@@ -49,10 +50,19 @@ public final class ServicioInmobiliaria {
         solicitudPropiedadDao = new SolicitudPropiedadDAO(db);
         gestionDao = new GestionComercialDAO(db);
         multimediaDao = new MultimediaDAO(db);
+        mediaApi = new MediaApiClient(db);
     }
 
     public boolean signedIn() {
         return sessionId != null;
+    }
+
+    public String mediaPublicUrl(String storedPath) {
+        return mediaApi.publicUrl(storedPath);
+    }
+
+    public String mediaStorageWarning() {
+        return mediaApi.storageWarning();
     }
 
     public Registro current() {
@@ -73,6 +83,7 @@ public final class ServicioInmobiliaria {
     }
 
     public void logout() {
+        try { mediaApi.logout(); } catch (RuntimeException ignored) { /* cerrar sesión local aunque el hosting no responda */ }
         sessionId = null;
     }
 
@@ -86,6 +97,7 @@ public final class ServicioInmobiliaria {
         if (!ClavesSeguras.verify(password, usuario.passwordHash()))
             throw new IllegalArgumentException("Correo o contraseña incorrectos.");
         sessionId = usuario.idUsuario();
+        mediaApi.login(email, password);
     }
 
     private static String required(Map<String, ?> data, String key, int max) {
@@ -732,6 +744,8 @@ public final class ServicioInmobiliaria {
                         .stream().findFirst().orElseThrow(() -> new IllegalArgumentException("El documento no pertenece a la solicitud."))
                 : dao.list("SELECT url_archivo AS archivo FROM solicitud_multimedia WHERE id_multimedia=? AND id_solicitud=?", fileId, request)
                         .stream().findFirst().orElseThrow(() -> new IllegalArgumentException("El archivo no pertenece a la solicitud."));
+        if (privateDocument && mediaApi.enabled())
+            return mediaApi.download(fileId, file.text("archivo"));
         return RutasAdjuntos.resolve(db.storage, db.webMediaRoot, db.webMediaPrefix,
                 file.text("archivo"), privateDocument);
     }
@@ -917,6 +931,10 @@ public final class ServicioInmobiliaria {
             throw new IllegalArgumentException("La solicitud admite hasta 8 fotos o videos.");
         if (!media && ownerRequestDocuments(id).size() >= 8)
             throw new IllegalArgumentException("La solicitud admite hasta 8 documentos.");
+        if (mediaApi.enabled()) {
+            mediaApi.upload("solicitud", id, type, source);
+            return;
+        }
         Path folder = media && db.webMediaRoot != null
                 ? db.webMediaRoot.resolve("archivos").resolve("solicitudes")
                 : db.storage.resolve("solicitudes").resolve(Integer.toString(id));
@@ -2223,7 +2241,7 @@ public final class ServicioInmobiliaria {
         Registro p = property(id);
         if (role() == 3 && p.id("id_propietario") != actor)
             throw new IllegalArgumentException("Solo podés adjuntar archivos a tus propiedades.");
-        Set<String> image = Set.of("jpg", "jpeg", "png"), video = Set.of("mp4");
+        Set<String> image = Set.of("jpg", "jpeg", "png", "webp"), video = Set.of("mp4");
         String name = source.getFileName().toString();
         String ext = name.substring(name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
         boolean media = type.equals("Imagen") || type.equals("Video");
@@ -2233,7 +2251,7 @@ public final class ServicioInmobiliaria {
                 ? image.contains(ext)
                 : type.equals("Video")
                         ? video.contains(ext)
-                        : Set.of("pdf", "jpg", "jpeg", "png").contains(ext)))
+                        : Set.of("pdf", "jpg", "jpeg", "png", "webp").contains(ext)))
             throw new IllegalArgumentException("Formato no admitido para " + type + ".");
         if (Files.size(source) > 50L * 1024 * 1024)
             throw new IllegalArgumentException("El archivo supera los 50 MB.");
@@ -2244,6 +2262,12 @@ public final class ServicioInmobiliaria {
         });
         if (Files.size(source) == 0)
             throw new IllegalArgumentException("El archivo está vacío.");
+        if (mediaApi.enabled()) {
+            if (Files.size(source) > 2L * 1024 * 1024)
+                throw new IllegalArgumentException("El servidor admite archivos de hasta 2 MB por carga.");
+            mediaApi.upload("propiedad", id, type, source);
+            return;
+        }
         String storedFile = copyAttachment(id, source, ext, media);
         Path destination = RutasAdjuntos.resolve(db.storage, db.webMediaRoot, db.webMediaPrefix,
                 storedFile, !media);
@@ -2302,6 +2326,8 @@ public final class ServicioInmobiliaria {
                         .orElseThrow();
         if (r.text("archivo").startsWith("https://") || r.text("archivo").startsWith("http://"))
             throw new IllegalArgumentException("Este archivo sigue alojado en un servicio externo; descargalo y volvé a adjuntarlo para guardarlo localmente.");
+        if (privateDoc && mediaApi.enabled())
+            return mediaApi.download(attachment, r.text("archivo"));
         return ar.edu.nuevohogar.persistencia.dao.RutasAdjuntos.resolve(
                 db.storage, db.webMediaRoot, db.webMediaPrefix, r.text("archivo"), privateDoc);
     }

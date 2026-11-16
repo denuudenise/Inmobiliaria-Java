@@ -1,0 +1,14 @@
+NUEVO HOGAR - MODO LOCAL PARA DEMOSTRACION
+
+1. Instalar Java 25 en Windows.
+2. Copiar esta carpeta completa a la computadora de demostracion.
+3. Abrir "Iniciar Nuevo Hogar.bat".
+4. La app se conecta a la base remota y guarda los adjuntos en data/archivos,
+   creada automaticamente junto a esta app cuando inicia.
+
+La multimedia de este modo queda en esta computadora. No se comparte con otras
+PCs ni con la web. Cuando Torga restablezca Apache y la API, se puede reactivar
+la multimedia central configurando media.api.url y media.web.url.
+
+config.properties contiene las credenciales necesarias para conectar la base.
+Compartir esta carpeta solo con la computadora/persona autorizada para la demo.

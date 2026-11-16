@@ -542,13 +542,38 @@ public final class AplicacionInmobiliaria extends Application {
         form.setMaxWidth(430);
         form.setPrefWidth(430);
         form.setMaxHeight(Region.USE_PREF_SIZE);
-        Button submit = button(
-                "Iniciar sesión",
-                () -> {
-                    service.login(f.value("email"), password.getText());
+        Button submit = button("Iniciar sesión", () -> {});
+        submit.setOnAction(event -> {
+            String email = f.value("email");
+            String enteredPassword = password.getText();
+            submit.setDisable(true);
+            submit.setText("Conectando…");
+            javafx.concurrent.Task<Void> loginTask = new javafx.concurrent.Task<>() {
+                @Override
+                protected Void call() {
+                    service.login(email, enteredPassword);
+                    return null;
+                }
+            };
+            loginTask.setOnSucceeded(done -> {
+                submit.setDisable(false);
+                submit.setText("Iniciar sesión");
+                safe(() -> {
                     shell();
                     dashboard();
+                    String mediaWarning = service.mediaStorageWarning();
+                    if (mediaWarning != null) info(mediaWarning);
                 });
+            });
+            loginTask.setOnFailed(failed -> {
+                submit.setDisable(false);
+                submit.setText("Iniciar sesión");
+                error(loginTask.getException());
+            });
+            Thread worker = new Thread(loginTask, "inicio-sesion-remoto");
+            worker.setDaemon(true);
+            worker.start();
+        });
         Button forgotPassword = secondary("¿Olvidaste tu contraseña?", this::forgotPassword);
         form.setSpacing(9);
         f.setHgap(0);
@@ -709,6 +734,8 @@ public final class AplicacionInmobiliaria extends Application {
                     try {
                         String stored = file.text("archivo");
                         if (stored.startsWith("https://") || stored.startsWith("http://")) return stored;
+                        String remote = service.mediaPublicUrl(stored);
+                        if (remote != null) return remote;
                         Path path = service.attachmentPath(property.id("id_propiedad"), file.id("id"), false);
                         return Files.isRegularFile(path) ? path.toUri().toString() : null;
                     } catch (IllegalArgumentException e) {
@@ -756,9 +783,13 @@ public final class AplicacionInmobiliaria extends Application {
                         String uri;
                         if (stored.startsWith("https://") || stored.startsWith("http://")) uri = stored;
                         else {
+                            String remote = service.mediaPublicUrl(stored);
+                            if (remote != null) uri = remote;
+                            else {
                             Path path = service.attachmentPath(property.id("id_propiedad"), file.id("id"), false);
                             if (!Files.isRegularFile(path)) return null;
                             uri = path.toUri().toString();
+                            }
                         }
                         return new ElementoGaleria(uri, file.text("tipo").equals("Video"));
                     } catch (IllegalArgumentException e) {
@@ -2429,6 +2460,12 @@ public final class AplicacionInmobiliaria extends Application {
 
     private void openOwnerRequestFile(int request, int file, boolean privateDocument) {
         try {
+            if (!privateDocument) {
+                Registro media = service.ownerRequestMedia(request).stream()
+                        .filter(row -> row.id("id") == file).findFirst().orElseThrow();
+                String remote = service.mediaPublicUrl(media.text("archivo"));
+                if (remote != null) { getHostServices().showDocument(remote); return; }
+            }
             Path path = service.ownerRequestFilePath(request, file, privateDocument);
             if (!Files.isRegularFile(path)) throw new IllegalArgumentException("El archivo local no está disponible.");
             getHostServices().showDocument(path.toUri().toString());
