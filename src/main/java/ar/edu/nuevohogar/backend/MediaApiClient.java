@@ -16,15 +16,13 @@ import java.util.UUID;
 final class MediaApiClient {
     private final String endpoint;
     private final String baseUrl;
-    private final HttpClient http;
+    private HttpClient http;
     private String csrf;
     private String lastFailure;
 
     MediaApiClient(ConexionBaseDatos db) {
         endpoint = db.mediaApiUrl;
         baseUrl = db.mediaWebUrl;
-        CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
-        http = HttpClient.newBuilder().cookieHandler(cookies).connectTimeout(Duration.ofSeconds(5)).build();
         if (!endpoint.isBlank()) {
             URI uri = URI.create(endpoint);
             if (!"https".equalsIgnoreCase(uri.getScheme()) && !isLocal(uri.getHost()))
@@ -82,7 +80,7 @@ final class MediaApiClient {
             Files.copy(source, data);
             data.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
             HttpRequest request = HttpRequest.newBuilder(uri("?action=upload"))
-                    .timeout(Duration.ofSeconds(60)).header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                    .timeout(Duration.ofSeconds(180)).header("Content-Type", "multipart/form-data; boundary=" + boundary)
                     .POST(HttpRequest.BodyPublishers.ofByteArray(data.toByteArray())).build();
             send(request);
         } catch (IOException e) {
@@ -95,7 +93,7 @@ final class MediaApiClient {
         HttpRequest request = HttpRequest.newBuilder(uri("?action=download&id=" + documentId))
                 .timeout(Duration.ofSeconds(30)).GET().build();
         try {
-            HttpResponse<byte[]> response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
+            HttpResponse<byte[]> response = http().send(request, HttpResponse.BodyHandlers.ofByteArray());
             if (response.statusCode() < 200 || response.statusCode() >= 300)
                 throw new IllegalStateException(error(response.body(), response.statusCode()));
             String ext = storedName != null && storedName.matches("(?i).+\\.(pdf|jpg|jpeg|png|webp)")
@@ -120,7 +118,7 @@ final class MediaApiClient {
 
     private String send(HttpRequest request) {
         try {
-            HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            HttpResponse<String> response = http().send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (response.statusCode() < 200 || response.statusCode() >= 300)
                 throw new IllegalStateException(error(response.body().getBytes(StandardCharsets.UTF_8), response.statusCode()));
             return response.body();
@@ -133,6 +131,13 @@ final class MediaApiClient {
     }
 
     private URI uri(String suffix) { return URI.create(endpoint + suffix); }
+    private synchronized HttpClient http() {
+        if (http == null) {
+            CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
+            http = HttpClient.newBuilder().cookieHandler(cookies).connectTimeout(Duration.ofSeconds(5)).build();
+        }
+        return http;
+    }
     private void requireSession(String operation) {
         if (csrf != null) return;
         String warning = storageWarning();

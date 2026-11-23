@@ -36,11 +36,24 @@ import java.sql.SQLException;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.Callable;
 import java.util.function.*;
 
 /** Presentación JavaFX de gestión interna, con espacios de trabajo según el rol. */
 public final class AplicacionInmobiliaria extends Application {
     private record ElementoGaleria(String uri, boolean video) {}
+    private record AdminDashboardData(DatosPanelAdministrador summary, List<Registro> ownerRequests) {}
+    private record AppInitialization(ServicioInmobiliaria service, boolean needsAdmin) {}
+    private record UserDashboardData(
+            int role,
+            String name,
+            int userId,
+            List<Registro> properties,
+            List<Registro> requests,
+            List<Registro> clients,
+            List<Registro> operations,
+            List<Registro> interests,
+            List<Registro> activity) {}
 
     private ServicioInmobiliaria service;
     private Stage stage;
@@ -49,6 +62,7 @@ public final class AplicacionInmobiliaria extends Application {
     private String activePage = "Iniciar sesión";
     private Runnable currentPageReload;
     private MediaPlayer activeMediaPlayer;
+    private long pageLoadGeneration;
 
     @Override
     public void start(Stage stage) {
@@ -67,20 +81,26 @@ public final class AplicacionInmobiliaria extends Application {
         stage.setMaximized(true);
         root.setCenter(new Label("Preparando Nuevo Hogar…"));
         stage.show();
-        javafx.concurrent.Task<ServicioInmobiliaria> init =
+        initializeService();
+    }
+
+    private void initializeService() {
+        root.setCenter(new Label("Preparando Nuevo Hogar…"));
+        javafx.concurrent.Task<AppInitialization> init =
                 new javafx.concurrent.Task<>() {
-                    protected ServicioInmobiliaria call() throws Exception {
+                    protected AppInitialization call() throws Exception {
                         ConexionBaseDatos db = new ConexionBaseDatos();
                         db.initialize();
                         DatosDemostracion.seed(db);
-                        return new ServicioInmobiliaria(db);
+                        ServicioInmobiliaria initialized = new ServicioInmobiliaria(db);
+                        return new AppInitialization(initialized, initialized.needsAdmin());
                     }
                 };
         init.setOnSucceeded(
                 e -> {
-                    service = init.getValue();
+                    service = init.getValue().service();
                     shell();
-                    if (service.needsAdmin()) bootstrap();
+                    if (init.getValue().needsAdmin()) bootstrap();
                     else login();
                 });
         init.setOnFailed(
@@ -89,11 +109,9 @@ public final class AplicacionInmobiliaria extends Application {
                             new VBox(
                                     18,
                                     title("No pudimos abrir la base de datos"),
-                                    label(
-                                            "No se pudo preparar la base configurada. Consultá el detalle"
-                                                    + " del aviso antes de reintentar.",
-                                            "subtitle"),
-                                    button("Reintentar", () -> start(stage)));
+                                    label("No se pudo conectar o consultar la base configurada. "
+                                            + rootCauseMessage(init.getException()), "subtitle"),
+                                    button("Reintentar", this::initializeService));
                     box.getStyleClass().add("page");
                     root.setCenter(box);
                     error(init.getException());
@@ -101,6 +119,15 @@ public final class AplicacionInmobiliaria extends Application {
         Thread t = new Thread(init, "inicio-base-datos");
         t.setDaemon(true);
         t.start();
+    }
+
+    private static String rootCauseMessage(Throwable error) {
+        Throwable cause = error;
+        while (cause.getCause() != null && cause.getCause() != cause) cause = cause.getCause();
+        String message = cause.getMessage();
+        return message == null || message.isBlank()
+                ? "Revisá la conexión a Internet y los datos del servidor."
+                : "Detalle: " + message;
     }
 
     private void shell() {
@@ -343,6 +370,7 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void page(String title, String subtitle) {
+        pageLoadGeneration++;
         stopActiveMedia();
         activePage = title;
         content = new VBox(22);
@@ -351,6 +379,27 @@ public final class AplicacionInmobiliaria extends Application {
         ScrollPane scroll = new ScrollPane(content);
         scroll.setFitToWidth(true);
         root.setCenter(scroll);
+    }
+
+    private <T> void loadPageAsync(
+            String title, String subtitle, Callable<T> loader, Consumer<T> render) {
+        page(title, subtitle);
+        long generation = pageLoadGeneration;
+        ProgressIndicator progress = new ProgressIndicator();
+        progress.setMaxSize(38, 38);
+        content.getChildren().add(card(progress, label("Cargando información del servidor…", "subtitle")));
+        javafx.concurrent.Task<T> task = new javafx.concurrent.Task<>() {
+            @Override protected T call() throws Exception { return loader.call(); }
+        };
+        task.setOnSucceeded(event -> {
+            if (generation == pageLoadGeneration) render.accept(task.getValue());
+        });
+        task.setOnFailed(event -> {
+            if (generation == pageLoadGeneration) error(task.getException());
+        });
+        Thread worker = new Thread(task, "carga-seccion-remota");
+        worker.setDaemon(true);
+        worker.start();
     }
 
     private static VBox card(Node... nodes) {
@@ -506,6 +555,7 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void login() {
+        pageLoadGeneration++;
         activePage = "Iniciar sesión";
         root.setTop(loginHeader());
         root.setLeft(null);
@@ -1414,8 +1464,9 @@ public final class AplicacionInmobiliaria extends Application {
         Path[] path = {null};
         VBox box =
                 card(
-                        label(documentsOnly ? "Documentos privados: solo los ven el propietario, administración y el agente responsable. PDF o fotos JPG/PNG, hasta 50 MB."
-                                : "Las fotos y videos van a la galería. Los planos, escrituras y comprobantes son privados. Máximo 50 MB por archivo.", "subtitle"),
+                        label(documentsOnly
+                                ? "Documentos privados: solo los ven el propietario, administración y el agente responsable. PDF o imágenes JPG/PNG/WEBP, hasta 2 MB por archivo."
+                                : "Fotos JPG/PNG/WEBP hasta 2 MB; videos MP4 hasta 20 MB. Planos, escrituras y comprobantes son privados y admiten hasta 2 MB.", "subtitle"),
                         f, help,
                         filename,
                         secondary(
@@ -1423,7 +1474,7 @@ public final class AplicacionInmobiliaria extends Application {
                                 () -> {
                                     FileChooser fc = new FileChooser();
                                     fc.setTitle(documentsOnly ? "Subir planos, escrituras o comprobantes" : "Adjuntar documentación o multimedia");
-                                    if (documentsOnly) fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("Documentos PDF o imágenes", "*.pdf", "*.jpg", "*.jpeg", "*.png"));
+                                    if (documentsOnly) fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("Documentos PDF o imágenes", "*.pdf", "*.jpg", "*.jpeg", "*.png", "*.webp"));
                                     java.io.File file = fc.showOpenDialog(stage);
                                     if (file != null) {
                                         path[0] = file.toPath();
@@ -1448,18 +1499,40 @@ public final class AplicacionInmobiliaria extends Application {
 
     private void dashboard() {
         currentPageReload = this::dashboard;
-        if (service.role() != 3) service.generarAlertasDeSeguimiento();
-        if (service.role() == 1) {
-            adminDashboard();
+        int role = service.role();
+        if (role == 1) {
+            loadPageAsync("Panel administrador", "Cargando indicadores y actividad…", () -> {
+                service.generarAlertasDeSeguimiento();
+                return new AdminDashboardData(
+                        new PanelAdministradorDAO(service.db).load(),
+                        service.ownerRequests().stream().limit(6).toList());
+            }, this::adminDashboard);
             return;
         }
-        List<Registro> properties = service.allProperties();
-        List<Registro> requests = service.role() == 3 ? service.ownerRequests() : service.requests();
-        String requestStatusKey = service.role() == 3 ? "estado_nombre" : "estado";
+        int userId = service.current().id("id_usuario");
+        String name = service.current().text("nombre");
+        loadPageAsync("Panel", "Cargando tus gestiones…", () -> {
+            if (role != 3) service.generarAlertasDeSeguimiento();
+            List<Registro> properties = service.allProperties();
+            List<Registro> requests = role == 3 ? service.ownerRequests() : service.requests();
+            return new UserDashboardData(
+                    role, name, userId, properties, requests,
+                    role == 2 ? service.clients() : List.of(),
+                    role == 2 ? service.operations() : List.of(),
+                    role == 3 ? service.interests(userId) : List.of(),
+                    role == 2 ? service.activity().stream().limit(5).toList() : List.of());
+        }, this::renderUserDashboard);
+    }
+
+    private void renderUserDashboard(UserDashboardData data) {
+        int role = data.role();
+        List<Registro> properties = data.properties();
+        List<Registro> requests = data.requests();
+        String requestStatusKey = role == 3 ? "estado_nombre" : "estado";
         page(
-                "¡Hola, " + service.current().text("nombre") + "!",
+                "¡Hola, " + data.name() + "!",
                 "Aquí tenés un resumen de "
-                        + (service.role() == 3
+                        + (role == 3
                                 ? "tus gestiones"
                                 : "la actividad de la inmobiliaria")
                         + " · "
@@ -1489,41 +1562,18 @@ public final class AplicacionInmobiliaria extends Application {
                                 properties.stream()
                                         .filter(r -> r.id("id_estado_verificacion") == 4)
                                         .count()));
-        if (service.role() == 1) {
+        if (role == 2) {
             metrics.getChildren()
                     .addAll(
-                            stat("Clientes", service.clients().size()),
-                            stat("Agentes", service.agents().size()),
-                            stat("Operaciones cerradas", service.operations().size()),
-                            stat(
-                                    "Disponibles",
-                                    properties.stream()
-                                            .filter(r -> r.id("id_estado_comercial") == 1)
-                                            .count()),
-                            stat(
-                                    "Vendidas",
-                                    properties.stream()
-                                            .filter(r -> r.id("id_estado_comercial") == 3)
-                                            .count()),
-                            stat(
-                                    "Alquiladas",
-                                    properties.stream()
-                                            .filter(r -> r.id("id_estado_comercial") == 4)
-                                            .count()));
-        } else if (service.role() == 2) {
-            metrics.getChildren()
-                    .addAll(
-                            stat("Mis clientes", service.clients().size()),
-                            stat("Mis operaciones", service.operations().size()));
-        } else {
+                            stat("Mis clientes", data.clients().size()),
+                            stat("Mis operaciones", data.operations().size()));
+        } else if (role == 3) {
             metrics.getChildren()
                     .addAll(
                             stat(
                                     "Mis solicitudes",
                                     requests.size()),
-                            stat(
-                                    "Mis intereses",
-                                    service.interests(service.current().id("id_usuario")).size()));
+                            stat("Mis intereses", data.interests().size()));
         }
         content.getChildren().add(metrics);
         PieChart pie = new PieChart();
@@ -1548,7 +1598,7 @@ public final class AplicacionInmobiliaria extends Application {
         VBox summary =
                 card(
                         label(
-                                service.role() == 3 ? "Mis propiedades" : "Cartera de propiedades",
+                                role == 3 ? "Mis propiedades" : "Cartera de propiedades",
                                 "section-title"),
                         t,
                         row(
@@ -1561,7 +1611,7 @@ public final class AplicacionInmobiliaria extends Application {
         TableView<Registro> rq =
                 table(
                         requests.stream().limit(5).toList(),
-                        service.role() == 3 ? "id_solicitud" : "id_publicacion",
+                        role == 3 ? "id_solicitud" : "id_publicacion",
                         "ID",
                         "titulo",
                         "Propiedad",
@@ -1575,8 +1625,8 @@ public final class AplicacionInmobiliaria extends Application {
                                 label("Últimas solicitudes", "section-title"),
                                 rq,
                                 secondary("Gestionar solicitudes", this::requests)));
-        if (service.role() != 3) {
-            List<Registro> activity = service.activity().stream().limit(5).toList();
+        if (role != 3) {
+            List<Registro> activity = data.activity();
             content.getChildren()
                     .add(
                             card(
@@ -1587,8 +1637,8 @@ public final class AplicacionInmobiliaria extends Application {
         }
     }
 
-    private void adminDashboard() {
-        DatosPanelAdministrador data = new PanelAdministradorDAO(service.db).load();
+    private void adminDashboard(AdminDashboardData snapshot) {
+        DatosPanelAdministrador data = snapshot.summary();
         page("¡Hola, Admin!", "Resumen general del sistema · "
                 + LocalDate.now().format(DateTimeFormatter.ofPattern("d 'de' MMMM 'de' yyyy", new Locale("es", "AR"))));
 
@@ -1673,7 +1723,7 @@ public final class AplicacionInmobiliaria extends Application {
         HBox.setHgrow(requestCard, Priority.ALWAYS);
         content.getChildren().add(requestRow);
 
-        List<Registro> recentOwnerRequests = service.ownerRequests().stream().limit(6).toList();
+        List<Registro> recentOwnerRequests = snapshot.ownerRequests();
         TableView<Registro> ownerRequests = table(recentOwnerRequests, "id_solicitud", "ID",
                 "titulo", "Propiedad propuesta", "cliente_nombre", "Propietario", "estado_nombre", "Estado",
                 "agente", "Agente");
@@ -1726,10 +1776,15 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void propertyList() {
+        currentPageReload = this::propertyList;
+        loadPageAsync("Propiedades", "Cargando inmuebles del servidor…", service::allProperties,
+                this::renderPropertyList);
+    }
+
+    private void renderPropertyList(List<Registro> all) {
         page(
                 service.role() == 3 ? "Mis propiedades" : "Propiedades",
                 "Administrá las fichas, sus estados y las solicitudes de publicación.");
-        List<Registro> all = service.allProperties();
         TableView<Registro> t =
                 table(
                         all,
@@ -2087,7 +2142,7 @@ public final class AplicacionInmobiliaria extends Application {
         Label mediaStatus = label("Archivos seleccionados: 0/8.", "subtitle");
         mediaStatus.setWrapText(true);
         VBox media = card(label("Fotos y videos", "section-title"),
-                label("Los archivos se guardarán en la carpeta local de la aplicación y quedarán asociados a la solicitud.", "subtitle"),
+                label("Fotos y videos se cargarán al servidor compartido con la página web. Imágenes hasta 2 MB y videos MP4 hasta 20 MB.", "subtitle"),
                 secondary("Seleccionar fotos o videos", () -> {
                     FileChooser chooser = new FileChooser();
                     chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Imágenes y videos", "*.jpg", "*.jpeg", "*.png", "*.webp", "*.mp4"));
@@ -2100,8 +2155,12 @@ public final class AplicacionInmobiliaria extends Application {
                             break;
                         }
                         try {
-                            if (Files.size(path) > 2L * 1024 * 1024) {
-                                info("Cada foto o video puede pesar hasta 2 MB: " + file.getName());
+                            long maxBytes = file.getName().toLowerCase(Locale.ROOT).endsWith(".mp4")
+                                    ? 20L * 1024 * 1024 : 2L * 1024 * 1024;
+                            if (Files.size(path) > maxBytes) {
+                                info(file.getName().toLowerCase(Locale.ROOT).endsWith(".mp4")
+                                        ? "Cada video MP4 puede pesar hasta 20 MB: " + file.getName()
+                                        : "Cada imagen puede pesar hasta 2 MB: " + file.getName());
                                 continue;
                             }
                         } catch (Exception e) {
@@ -2569,10 +2628,16 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void clients() {
+        currentPageReload = this::clients;
+        loadPageAsync("Clientes", "Cargando cartera de clientes…", service::clients,
+                this::renderClients);
+    }
+
+    private void renderClients(List<Registro> clients) {
         page("Clientes", "Ficha única, roles comerciales e historial compartido de atención.");
         TableView<Registro> t =
                 table(
-                        service.clients(),
+                        clients,
                         "id",
                         "ID",
                         "etiqueta",
@@ -2767,8 +2832,14 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void consultations() {
+        currentPageReload = this::consultations;
+        loadPageAsync("Consultas", "Cargando consultas del servidor…", service::consultations,
+                this::renderConsultations);
+    }
+
+    private void renderConsultations(List<Registro> consultations) {
         page("Consultas", "Revisá las consultas recibidas por propiedades y guardá la respuesta que el equipo dará al interesado.");
-        TableView<Registro> inquiries = table(service.consultations(), "fecha", "Fecha", "persona", "Persona",
+        TableView<Registro> inquiries = table(consultations, "fecha", "Fecha", "persona", "Persona",
                 "correo", "Correo", "telefono", "Teléfono", "propiedad", "Propiedad", "descripcion", "Consulta",
                 "resultado", "Respuesta", "estado", "Estado", "agente", "Agente");
         content.getChildren().add(card(inquiries,
@@ -3400,10 +3471,15 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void users() {
+        currentPageReload = this::users;
+        loadPageAsync("Usuarios", "Cargando usuarios…", service::users, this::renderUsers);
+    }
+
+    private void renderUsers(List<Registro> users) {
         page("Usuarios", "Creá cuentas para el equipo y administrá su acceso al sistema.");
         TableView<Registro> t =
                 table(
-                        service.users(),
+                        users,
                         "id",
                         "ID",
                         "etiqueta",
@@ -3478,8 +3554,14 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void agents() {
+        currentPageReload = this::agents;
+        loadPageAsync("Agentes", "Cargando equipo y cartera…",
+                () -> new PanelAdministradorDAO(service.db).listAgents(), this::renderAgents);
+    }
+
+    private void renderAgents(List<Registro> agentRows) {
         page("Agentes", "Consultá el equipo, sus clientes vinculados por actividad y el estado de sus cuentas.");
-        TableView<Registro> t = table(new PanelAdministradorDAO(service.db).listAgents(),
+        TableView<Registro> t = table(agentRows,
                 "id_usuario", "ID", "agente", "Agente", "email", "Correo", "telefono", "Teléfono",
                 "clientes", "Clientes asignados", "propiedades", "Propiedades creadas", "activo", "Activo");
         content.getChildren().addAll(
@@ -3501,10 +3583,17 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void agentProperties(Registro agent) {
+        currentPageReload = () -> agentProperties(agent);
+        loadPageAsync("Propiedades de " + agent.text("agente"), "Cargando cartera del agente…",
+                () -> service.propertiesForAgent(agent.id("id_usuario")),
+                properties -> renderAgentProperties(agent, properties));
+    }
+
+    private void renderAgentProperties(Registro agent, List<Registro> propertiesRows) {
         int agentId = agent.id("id_usuario");
         page("Propiedades de " + agent.text("agente"),
                 "Inmuebles asignados a este agente, creados por él o vinculados a clientes de su cartera.");
-        TableView<Registro> properties = table(service.propertiesForAgent(agentId),
+        TableView<Registro> properties = table(propertiesRows,
                 "id_propiedad", "ID", "titulo", "Propiedad", "localidad", "Localidad",
                 "propietario", "Propietario", "verificacion", "Verificación",
                 "comercial", "Estado comercial", "agente_responsable", "Agente responsable");

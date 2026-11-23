@@ -947,8 +947,11 @@ public final class ServicioInmobiliaria {
         if (!Set.of("Imagen", "Video", "Plano", "Escritura", "Impuesto", "Servicio", "Reglamento", "Otra").contains(type))
             throw new IllegalArgumentException("Tipo de archivo inválido.");
         if (!allowed.contains(ext)) throw new IllegalArgumentException("Formato no admitido para " + type + ".");
-        if (!Files.isRegularFile(source) || Files.size(source) == 0 || Files.size(source) > 2L * 1024 * 1024)
-            throw new IllegalArgumentException("El archivo debe existir y pesar hasta 2 MB.");
+        long maxBytes = type.equals("Video") ? 20L * 1024 * 1024 : 2L * 1024 * 1024;
+        if (!Files.isRegularFile(source) || Files.size(source) == 0 || Files.size(source) > maxBytes)
+            throw new IllegalArgumentException(type.equals("Video")
+                    ? "El video debe existir y pesar hasta 20 MB."
+                    : "La imagen o el documento debe existir y pesar hasta 2 MB.");
         if (media && ownerRequestMedia(id).size() >= 8)
             throw new IllegalArgumentException("La solicitud admite hasta 8 fotos o videos.");
         if (!media && ownerRequestDocuments(id).size() >= 8)
@@ -2277,8 +2280,11 @@ public final class ServicioInmobiliaria {
                         ? video.contains(ext)
                         : Set.of("pdf", "jpg", "jpeg", "png", "webp").contains(ext)))
             throw new IllegalArgumentException("Formato no admitido para " + type + ".");
-        if (Files.size(source) > 50L * 1024 * 1024)
-            throw new IllegalArgumentException("El archivo supera los 50 MB.");
+        long maxBytes = type.equals("Video") ? 20L * 1024 * 1024 : 2L * 1024 * 1024;
+        if (Files.size(source) > maxBytes)
+            throw new IllegalArgumentException(type.equals("Video")
+                    ? "El video supera los 20 MB permitidos por la página."
+                    : "La imagen o el documento supera los 2 MB permitidos por la página.");
         db.transaction(c -> {
             Registro current = editable(c, id, actor);
             validateAttachmentState(current, media);
@@ -2287,8 +2293,6 @@ public final class ServicioInmobiliaria {
         if (Files.size(source) == 0)
             throw new IllegalArgumentException("El archivo está vacío.");
         if (mediaApi.enabled()) {
-            if (Files.size(source) > 2L * 1024 * 1024)
-                throw new IllegalArgumentException("El servidor admite archivos de hasta 2 MB por carga.");
             mediaApi.upload("propiedad", id, type, source);
             return;
         }

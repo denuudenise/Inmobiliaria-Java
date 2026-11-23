@@ -177,12 +177,19 @@ if ($id < 1 || !$upload || !is_uploaded_file((string)$upload['tmp_name']))
 $isMedia = in_array($type, ['Imagen', 'Video'], true);
 $isDocument = in_array($type, ['Plano', 'Escritura', 'Impuesto', 'Servicio', 'Reglamento', 'Otra'], true);
 if (!$isMedia && !$isDocument) media_json(400, ['error' => 'Tipo de archivo inválido.']);
-$limit = $target === 'solicitud' ? 2 * 1024 * 1024 : 2 * 1024 * 1024;
+$limit = $type === 'Video' ? 20 * 1024 * 1024 : 2 * 1024 * 1024;
 if ((int)$upload['error'] !== UPLOAD_ERR_OK || (int)$upload['size'] < 1 || (int)$upload['size'] > $limit)
-    media_json(400, ['error' => 'Cada archivo debe pesar hasta 2 MB.']);
+    media_json(400, ['error' => $type === 'Video'
+        ? 'El video debe pesar hasta 20 MB.'
+        : 'Cada imagen o documento debe pesar hasta 2 MB.']);
 $mime = (new finfo(FILEINFO_MIME_TYPE))->file((string)$upload['tmp_name']);
 $extension = media_extension((string)$mime, $type);
 if (!$extension) media_json(400, ['error' => 'El formato del archivo no está permitido.']);
+if ($type === 'Video') {
+    $header = file_get_contents((string)$upload['tmp_name'], false, null, 0, 16) ?: '';
+    if (strlen($header) < 8 || substr($header, 4, 4) !== 'ftyp')
+        media_json(400, ['error' => 'Subí un video MP4 válido.']);
+}
 
 $db = Database::connection();
 $db->beginTransaction();
