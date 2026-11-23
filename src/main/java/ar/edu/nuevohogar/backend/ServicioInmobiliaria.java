@@ -795,8 +795,10 @@ public final class ServicioInmobiliaria {
         int bathrooms = integer(d, "banos", 0, 1000);
         int age = integer(d, "antiguedad_anos", 0, 1000);
         validateOffers(offers);
-        if (documentNotes != null && documentNotes.length() > 2000)
-            throw new IllegalArgumentException("La observación documental no puede superar los 2000 caracteres.");
+        if (documentNotes != null && documentNotes.trim().length() > 1000)
+            throw new IllegalArgumentException("La aclaración documental no puede superar los 1000 caracteres.");
+        if ((missingPlans || missingDeed) && (documentNotes == null || documentNotes.isBlank()))
+            throw new IllegalArgumentException("Contá por qué falta el documento o cuándo lo vas a presentar.");
         return db.transaction(c -> {
             int id = insert(c, "INSERT INTO solicitudes_publicacion(id_cliente,id_tipo_propiedad,"
                     + "id_tipo_transaccion,id_estado_verificacion,titulo,direccion,localidad,descripcion,"
@@ -920,8 +922,9 @@ public final class ServicioInmobiliaria {
                         property, offer.id("id_tipo_transaccion"), offer.money("precio"), offer.text("moneda"), offer.get("precio_minimo"));
             for (Registro feature : list(c, "SELECT id_caracteristica FROM solicitud_caracteristicas WHERE id_solicitud=?", id))
                 exec(c, "INSERT INTO propiedad_caracteristicas(id_propiedad,id_caracteristica) VALUES(?,?)", property, feature.id("id_caracteristica"));
-            for (Registro media : list(c, "SELECT url_archivo,tipo FROM solicitud_multimedia WHERE id_solicitud=?", id))
-                exec(c, "INSERT INTO propiedad_multimedia(id_propiedad,url_archivo,tipo,orden) VALUES(?,?,?,1)", property, media.text("url_archivo"), media.text("tipo"));
+            for (Registro media : list(c, "SELECT url_archivo,tipo,orden FROM solicitud_multimedia WHERE id_solicitud=? ORDER BY orden,id_multimedia", id))
+                exec(c, "INSERT INTO propiedad_multimedia(id_propiedad,url_archivo,tipo,orden) VALUES(?,?,?,?)",
+                        property, media.text("url_archivo"), media.text("tipo"), media.id("orden"));
             exec(c, "UPDATE documentos SET id_propiedad=?,id_solicitud=NULL WHERE id_solicitud=?", property, id);
             exec(c, "UPDATE propiedad_impuestos SET id_propiedad=?,id_solicitud=NULL WHERE id_solicitud=?", property, id);
             exec(c, "UPDATE solicitudes_publicacion SET id_estado_verificacion=3,motivo_rechazo=NULL,fecha_actualizacion=NOW() WHERE id_solicitud=?", id);
@@ -2263,6 +2266,30 @@ public final class ServicioInmobiliaria {
         return multimediaDao.listar(id);
     }
 
+    public void reorderPropertyImages(int propertyId, List<Integer> orderedMediaIds) {
+        int actor = require(1, 2, 3);
+        if (orderedMediaIds == null || orderedMediaIds.isEmpty())
+            throw new IllegalArgumentException("La galería no tiene fotos para ordenar.");
+        if (new HashSet<>(orderedMediaIds).size() != orderedMediaIds.size())
+            throw new IllegalArgumentException("La lista de fotos contiene elementos repetidos.");
+        db.transaction(c -> {
+            editable(c, propertyId, actor);
+            List<Registro> current = list(c,
+                    "SELECT id_multimedia AS id FROM propiedad_multimedia WHERE id_propiedad=? AND tipo='Imagen' ORDER BY orden,id_multimedia",
+                    propertyId);
+            Set<Integer> valid = new HashSet<>();
+            current.forEach(row -> valid.add(row.id("id")));
+            if (valid.size() != orderedMediaIds.size() || !valid.equals(new HashSet<>(orderedMediaIds)))
+                throw new IllegalArgumentException("La galería cambió. Recargá la ficha e intentá de nuevo.");
+            for (int index = 0; index < orderedMediaIds.size(); index++)
+                exec(c, "UPDATE propiedad_multimedia SET orden=? WHERE id_multimedia=? AND id_propiedad=? AND tipo='Imagen'",
+                        index + 1, orderedMediaIds.get(index), propertyId);
+            audit(c, actor, "Orden de galería actualizado", "propiedades", propertyId,
+                    "Portada: archivo multimedia #" + orderedMediaIds.getFirst());
+            return null;
+        });
+    }
+
     public void attach(int id, Path source, String type) throws Exception {
         int actor = require(1, 2, 3);
         Registro p = property(id);
@@ -2304,9 +2331,12 @@ public final class ServicioInmobiliaria {
                     c -> {
                         Registro current = editable(c, id, actor);
                         validateAttachmentState(current, media);
-                        if (media)
-                            multimediaDao.insertar(c, id, storedFile, type, 1);
-                        else
+                        if (media) {
+                            int order = list(c,
+                                    "SELECT COALESCE(MAX(orden),0)+1 AS siguiente FROM propiedad_multimedia WHERE id_propiedad=? AND tipo=?",
+                                    id, type).getFirst().id("siguiente");
+                            multimediaDao.insertar(c, id, storedFile, type, order);
+                        } else
                             exec(
                                     c,
                                     "INSERT INTO"

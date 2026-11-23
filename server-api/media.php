@@ -228,14 +228,16 @@ try {
     $original = mb_substr(basename(str_replace('\\', '/', (string)$upload['name'])), 0, 255);
     if ($isMedia && $target === 'propiedad') {
         $stored = '/Inmobiliaria/archivos/propiedades/' . $filename;
-        $q = $db->prepare('INSERT INTO propiedad_multimedia(id_propiedad,url_archivo,tipo,orden) VALUES(?,?,?,1)');
-        $q->execute([$id, $stored, $type]);
+        $q = $db->prepare('INSERT INTO propiedad_multimedia(id_propiedad,url_archivo,tipo,orden) '
+            . 'SELECT ?,?,?,COALESCE(MAX(orden),0)+1 FROM propiedad_multimedia WHERE id_propiedad=? AND tipo=?');
+        $q->execute([$id, $stored, $type, $id, $type]);
         $recordId = (int)$db->lastInsertId();
         $entity = 'propiedades';
     } elseif ($isMedia) {
         $stored = '/Inmobiliaria/archivos/solicitudes/' . $filename;
-        $q = $db->prepare('INSERT INTO solicitud_multimedia(id_solicitud,url_archivo,tipo) VALUES(?,?,?)');
-        $q->execute([$id, $stored, $type]);
+        $q = $db->prepare('INSERT INTO solicitud_multimedia(id_solicitud,url_archivo,tipo,orden) '
+            . 'SELECT ?,?,?,COALESCE(MAX(orden),0)+1 FROM solicitud_multimedia WHERE id_solicitud=? AND tipo=?');
+        $q->execute([$id, $stored, $type, $id, $type]);
         $recordId = (int)$db->lastInsertId();
         $entity = 'solicitudes_publicacion';
     } else {

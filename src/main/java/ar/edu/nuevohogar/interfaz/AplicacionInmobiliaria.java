@@ -1126,6 +1126,8 @@ public final class AplicacionInmobiliaria extends Application {
             actions.getChildren().add(button("Hacer una oferta", () -> makeOffer(id)));
         }
         facts.getChildren().add(actions);
+        if (service.role() == 1 || service.role() == 2)
+            facts.getChildren().add(secondary("Cambiar estado comercial", () -> stateForm(property)));
 
         double galleryWidth = Math.min(650, Math.max(320, stage.getScene().getWidth() - (service.role() == 3 ? 100 : 360)));
         FlowPane hero = new FlowPane(20, 20, propertyGallery(property, galleryWidth, galleryWidth * 370 / 650), facts);
@@ -1867,6 +1869,37 @@ public final class AplicacionInmobiliaria extends Application {
         } else {
             double width = Math.min(900, Math.max(320, stage.getScene().getWidth() - 330));
             mediaBox.getChildren().add(propertyGallery(property, width, width * 370 / 650));
+            List<Integer> photoOrder = new ArrayList<>(media.stream()
+                    .filter(file -> file.text("tipo").equals("Imagen"))
+                    .map(file -> file.id("id")).toList());
+            if (!photoOrder.isEmpty()) {
+                mediaBox.getChildren().add(label(
+                        "La primera foto es la portada que se muestra en el catálogo. Reordená las imágenes con las flechas.",
+                        "subtitle"));
+                for (int i = 0; i < photoOrder.size(); i++) {
+                    int index = i;
+                    Registro photo = media.stream().filter(file -> file.id("id") == photoOrder.get(index))
+                            .findFirst().orElseThrow();
+                    Label caption = label((i == 0 ? "Portada · " : "Foto " + (i + 1) + " · ")
+                            + photo.text("archivo"), "subtitle");
+                    caption.setMaxWidth(600);
+                    Button up = secondary("↑", () -> {
+                        if (index == 0) return;
+                        Collections.swap(photoOrder, index, index - 1);
+                        service.reorderPropertyImages(id, photoOrder);
+                        propertyFiles(id);
+                    });
+                    Button down = secondary("↓", () -> {
+                        if (index >= photoOrder.size() - 1) return;
+                        Collections.swap(photoOrder, index, index + 1);
+                        service.reorderPropertyImages(id, photoOrder);
+                        propertyFiles(id);
+                    });
+                    up.setDisable(i == 0);
+                    down.setDisable(i == photoOrder.size() - 1);
+                    mediaBox.getChildren().add(row(caption, up, down));
+                }
+            }
         }
         content.getChildren().add(mediaBox);
 
@@ -1879,6 +1912,39 @@ public final class AplicacionInmobiliaria extends Application {
                 documents.getChildren().add(secondary("Subir documentación", () -> upload(id, true)));
             content.getChildren().add(documents);
         }
+    }
+
+    private void renderPendingPhotoOrder(List<Path> pendingMedia, VBox list) {
+        list.setSpacing(7);
+        Runnable[] render = {() -> {}};
+        render[0] = () -> {
+            list.getChildren().clear();
+            List<Integer> positions = new ArrayList<>();
+            for (int i = 0; i < pendingMedia.size(); i++)
+                if (!pendingMedia.get(i).getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".mp4"))
+                    positions.add(i);
+            for (int photoIndex = 0; photoIndex < positions.size(); photoIndex++) {
+                int currentPhotoIndex = photoIndex;
+                Path photo = pendingMedia.get(positions.get(photoIndex));
+                Label name = label((photoIndex == 0 ? "Portada nueva · " : "Foto nueva " + (photoIndex + 1) + " · ")
+                        + photo.getFileName(), "subtitle");
+                name.setMaxWidth(570);
+                Button up = secondary("↑", () -> {
+                    if (currentPhotoIndex == 0) return;
+                    Collections.swap(pendingMedia, positions.get(currentPhotoIndex), positions.get(currentPhotoIndex - 1));
+                    render[0].run();
+                });
+                Button down = secondary("↓", () -> {
+                    if (currentPhotoIndex >= positions.size() - 1) return;
+                    Collections.swap(pendingMedia, positions.get(currentPhotoIndex), positions.get(currentPhotoIndex + 1));
+                    render[0].run();
+                });
+                up.setDisable(photoIndex == 0);
+                down.setDisable(photoIndex == positions.size() - 1);
+                list.getChildren().add(row(name, up, down));
+            }
+        };
+        render[0].run();
     }
 
     private void propertyForm(Registro original) {
@@ -1936,6 +2002,8 @@ public final class AplicacionInmobiliaria extends Application {
         Map<Integer, CheckBox> features = featureChecks(chosen);
         Integer[] savedPropertyId = {edit ? p.id("id_propiedad") : null};
         List<Path> pendingMedia = new ArrayList<>();
+        VBox pendingPhotoList = new VBox(7);
+        renderPendingPhotoOrder(pendingMedia, pendingPhotoList);
         int[] savedMediaCount = {edit ? service.attachments(p.id("id_propiedad"), false).size() : 0};
         Label existingMedia = label("Archivos multimedia vinculados: " + savedMediaCount[0], "subtitle");
         Label selectedMedia = label("Todavía no seleccionaste fotos ni videos.", "subtitle");
@@ -1947,19 +2015,19 @@ public final class AplicacionInmobiliaria extends Application {
                     : "Pendientes de cargar: " + pendingMedia.stream()
                             .map(path -> path.getFileName().toString())
                             .collect(java.util.stream.Collectors.joining(", ")));
+            renderPendingPhotoOrder(pendingMedia, pendingPhotoList);
         };
         VBox mediaBox = card(
                 label("Fotos y videos de la propiedad", "section-title"),
-                label("Podés seleccionar varias imágenes JPG, JPEG o PNG y videos MP4 (H.264). "
-                        + "Cada archivo puede pesar hasta 50 MB. Se cargarán antes de enviar la "
-                        + "solicitud para que el equipo pueda revisarlos.", "subtitle"),
+                label("Podés seleccionar varias imágenes JPG, JPEG, PNG o WEBP de hasta 2 MB y videos MP4 (H.264) de hasta 20 MB. Se cargarán antes de guardar.", "subtitle"),
                 existingMedia,
                 selectedMedia,
+                pendingPhotoList,
                 secondary("Seleccionar fotos o videos", () -> {
                     FileChooser chooser = new FileChooser();
                     chooser.setTitle("Seleccionar fotos o videos de la propiedad");
                     chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(
-                            "Imágenes y videos", "*.jpg", "*.jpeg", "*.png", "*.mp4"));
+                            "Imágenes y videos", "*.jpg", "*.jpeg", "*.png", "*.webp", "*.mp4"));
                     List<java.io.File> files = chooser.showOpenMultipleDialog(stage);
                     if (files == null) return;
                     for (java.io.File file : files) {
@@ -2139,6 +2207,8 @@ public final class AplicacionInmobiliaria extends Application {
         Runnable[] refreshValidationRef = {() -> {}};
         VBox documents = pendingDocumentsPanel(pendingDocuments, () -> refreshValidationRef[0].run());
         List<Path> pendingMedia = new ArrayList<>();
+        VBox pendingPhotoList = new VBox(7);
+        renderPendingPhotoOrder(pendingMedia, pendingPhotoList);
         Label mediaStatus = label("Archivos seleccionados: 0/8.", "subtitle");
         mediaStatus.setWrapText(true);
         VBox media = card(label("Fotos y videos", "section-title"),
@@ -2173,14 +2243,21 @@ public final class AplicacionInmobiliaria extends Application {
                             + (pendingMedia.isEmpty() ? "" : " · " + pendingMedia.stream()
                                     .map(path -> path.getFileName().toString())
                                     .collect(java.util.stream.Collectors.joining(", "))));
+                    renderPendingPhotoOrder(pendingMedia, pendingPhotoList);
                 }), mediaStatus);
+        media.getChildren().add(pendingPhotoList);
         CheckBox missingPlans = new CheckBox("Todavía no tengo los planos");
         CheckBox missingDeed = new CheckBox("Todavía no tengo la escritura");
+        Formulario documentation = new Formulario(1);
+        TextArea documentNotes = documentation.area(
+                "observaciones_documentacion", "Aclaraciones sobre la documentación", "");
+        documentNotes.setPromptText("Contá por qué falta y cuándo pensás presentarlo.");
         Label validationStatus = label("Completá los campos marcados con * y elegí al menos una operación.", "subtitle");
         validationStatus.setWrapText(true);
         Runnable refreshValidation = () -> {
             List<String> issues = ownerRequestMissingFields(f.values(), enabled, prices,
-                    minimumPrices, pendingDocuments, missingPlans.isSelected(), missingDeed.isSelected());
+                    minimumPrices, pendingDocuments, missingPlans.isSelected(), missingDeed.isSelected(),
+                    documentNotes.getText());
             validationStatus.setText(issues.isEmpty()
                     ? "Los datos obligatorios están completos."
                     : "Para enviar, revisá: " + String.join(" · ", issues));
@@ -2197,8 +2274,7 @@ public final class AplicacionInmobiliaria extends Application {
         minimumPrices.values().forEach(input -> input.textProperty().addListener((o, old, value) -> refreshValidation.run()));
         missingPlans.selectedProperty().addListener((o, old, value) -> refreshValidation.run());
         missingDeed.selectedProperty().addListener((o, old, value) -> refreshValidation.run());
-        Formulario documentation = new Formulario(1);
-        documentation.area("observaciones_documentacion", "Aclaración sobre documentación pendiente", "");
+        documentNotes.textProperty().addListener((o, old, value) -> refreshValidation.run());
         List<ServicioInmobiliaria.PropertyTax> taxes = new ArrayList<>();
         VBox taxPanel = pendingTaxesPanel(taxes);
         refreshValidation.run();
@@ -2206,12 +2282,13 @@ public final class AplicacionInmobiliaria extends Application {
                 card(label("Características", "section-title"), flow(features.values().toArray(Node[]::new))),
                 media, documents,
                 card(label("Planos y escritura", "section-title"),
-                        label("Adjuntá ambos documentos o indicá cuál todavía no tenés.", "subtitle"),
+                        label("Adjuntá planos y escritura. Si marcás que te falta alguno, explicá el motivo o cuándo lo presentarás.", "subtitle"),
                         missingPlans, missingDeed, documentation),
                 validationStatus, taxPanel,
                 flow(button("Enviar solicitud", () -> {
                     List<String> currentIssues = ownerRequestMissingFields(f.values(), enabled, prices,
-                            minimumPrices, pendingDocuments, missingPlans.isSelected(), missingDeed.isSelected());
+                            minimumPrices, pendingDocuments, missingPlans.isSelected(), missingDeed.isSelected(),
+                            documentNotes.getText());
                     validationStatus.setText(currentIssues.isEmpty()
                             ? "Los datos obligatorios están completos."
                             : "Para enviar, revisá: " + String.join(" · ", currentIssues));
@@ -2272,7 +2349,7 @@ public final class AplicacionInmobiliaria extends Application {
                                 + String.join("\n• ", missing));
                     int id = service.createOwnerRequest(f.values(), proposed, checked(features),
                             missingPlans.isSelected(), missingDeed.isSelected(),
-                            documentation.value("observaciones_documentacion"));
+                            documentNotes.getText().trim());
                     try {
                         for (Path path : pendingMedia)
                             service.attachOwnerRequest(id, path, path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".mp4") ? "Video" : "Imagen");
@@ -2290,7 +2367,7 @@ public final class AplicacionInmobiliaria extends Application {
     private List<String> ownerRequestMissingFields(Map<String, String> values,
             Map<Integer, CheckBox> enabled, Map<Integer, TextField> prices,
             Map<Integer, TextField> minimumPrices, Map<Path, String> pendingDocuments,
-            boolean missingPlans, boolean missingDeed) {
+            boolean missingPlans, boolean missingDeed, String documentNotes) {
         List<String> missing = new ArrayList<>();
         Map<String, String> required = new LinkedHashMap<>();
         required.put("titulo", "Título");
@@ -2326,6 +2403,12 @@ public final class AplicacionInmobiliaria extends Application {
             missing.add("Adjuntar planos o marcar que no se tienen");
         if (!pendingDocuments.values().contains("Escritura") && !missingDeed)
             missing.add("Adjuntar escritura o marcar que no se tiene");
+        if (missingPlans || missingDeed) {
+            if (documentNotes == null || documentNotes.isBlank())
+                missing.add("Aclarar por qué falta la documentación o cuándo se presentará");
+            else if (documentNotes.trim().length() > 1000)
+                missing.add("La aclaración sobre documentación admite hasta 1000 caracteres");
+        }
         boolean hasOperation = false;
         for (Map.Entry<Integer, CheckBox> entry : enabled.entrySet()) {
             if (!entry.getValue().isSelected()) continue;
