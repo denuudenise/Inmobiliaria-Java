@@ -5,9 +5,11 @@ import java.nio.file.*;
 import java.sql.*;
 import java.util.*;
 
-public final class ConexionBaseDatos {
+public final class ConexionBaseDatos implements AutoCloseable {
     private static final Object DEMO_INITIALIZATION_LOCK = new Object();
     private final String url, user, password;
+    private com.zaxxer.hikari.HikariDataSource pool;
+    private boolean closed;
     public final boolean demo;
     public final Path storage;
     public final Path webMediaRoot;
@@ -22,12 +24,12 @@ public final class ConexionBaseDatos {
         password = setting(p, "db.password", "DB_PASSWORD", "");
         demo = url.startsWith("jdbc:h2:");
         storage =
-                Path.of(setting(p, "storage.path", "STORAGE_PATH", "data/archivos"))
+                Path.of(p.getProperty("config.base", "")).resolve(setting(p, "storage.path", "STORAGE_PATH", "data/archivos"))
                         .toAbsolutePath()
                         .normalize();
         Files.createDirectories(storage);
         String webRoot = setting(p, "media.web.root", "MEDIA_WEB_ROOT", "").trim();
-        webMediaRoot = webRoot.isEmpty() ? null : Path.of(webRoot).toAbsolutePath().normalize();
+        webMediaRoot = webRoot.isEmpty() ? null : Path.of(p.getProperty("config.base", "")).resolve(webRoot).toAbsolutePath().normalize();
         String prefix = setting(p, "media.web.prefix", "MEDIA_WEB_PREFIX", "/Inmobiliaria/");
         webMediaPrefix = prefix.endsWith("/") ? prefix : prefix + "/";
         if (!webMediaPrefix.startsWith("/") || webMediaPrefix.equals("/"))
@@ -53,6 +55,35 @@ public final class ConexionBaseDatos {
     }
 
     public Connection open() throws SQLException {
+        // Reutiliza conexiones físicas sin cambiar el driver, URL, SSL ni credenciales.
+        // H2 conserva conexiones independientes para las pruebas de demostración.
+        if (url.startsWith("jdbc:mariadb:") || url.startsWith("jdbc:mysql:")) {
+            com.zaxxer.hikari.HikariDataSource source;
+            synchronized (this) {
+                if (closed) throw new SQLException("La conexión de la aplicación está cerrada.");
+                if (pool == null) {
+                    source = new com.zaxxer.hikari.HikariDataSource();
+                    source.setJdbcUrl(url);
+                    source.setUsername(user);
+                    source.setPassword(password);
+                    source.setMaximumPoolSize(4);
+                    source.setMinimumIdle(0);
+                    source.setConnectionTimeout(10000);
+                    source.setValidationTimeout(3000);
+                    source.setIdleTimeout(60000);
+                    source.setMaxLifetime(300000);
+                    source.setInitializationFailTimeout(-1);
+                    source.addDataSourceProperty("connectTimeout", "10000");
+                    source.addDataSourceProperty("socketTimeout", "20000");
+                    pool = source;
+                }
+                source = pool;
+            }
+            return source.getConnection();
+        }
+        synchronized (this) {
+            if (closed) throw new SQLException("La conexión de la aplicación está cerrada.");
+        }
         Properties connection = new Properties();
         connection.setProperty("user", user);
         connection.setProperty("password", password);
@@ -61,6 +92,11 @@ public final class ConexionBaseDatos {
             connection.setProperty("socketTimeout", "20000");
         }
         return DriverManager.getConnection(url, connection);
+    }
+
+    @Override public synchronized void close() {
+        closed = true;
+        if (pool != null) pool.close();
     }
 
     private static String setting(Properties properties, String property, String environment, String fallback) {
@@ -84,6 +120,7 @@ public final class ConexionBaseDatos {
             Path config = directory.resolve("config.properties");
             if (Files.isRegularFile(config)) {
                 try (var in = Files.newInputStream(config)) { properties.load(in); }
+                properties.setProperty("config.base", directory.toString());
                 break;
             }
         }

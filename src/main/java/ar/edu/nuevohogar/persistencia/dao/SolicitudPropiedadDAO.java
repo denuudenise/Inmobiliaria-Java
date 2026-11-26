@@ -58,6 +58,21 @@ public final class SolicitudPropiedadDAO {
                 + "FROM solicitud_multimedia WHERE id_solicitud=? ORDER BY fecha_carga,id_multimedia", id);
     }
 
+    /** Conserva la galería nueva y permite aprobar solicitudes de esquemas anteriores. */
+    public static List<Registro> mediaForApproval(java.sql.Connection connection, int id)
+            throws java.sql.SQLException {
+        boolean ordered = false;
+        try (var statement = connection.prepareStatement("SELECT * FROM solicitud_multimedia WHERE 1=0");
+                var result = statement.executeQuery()) {
+            var metadata = result.getMetaData();
+            for (int i = 1; i <= metadata.getColumnCount(); i++)
+                if ("orden".equalsIgnoreCase(metadata.getColumnName(i))) ordered = true;
+        }
+        return ConsultasSQL.list(connection, "SELECT url_archivo,tipo,"
+                + (ordered ? "orden" : "0 AS orden") + " FROM solicitud_multimedia WHERE id_solicitud=? ORDER BY "
+                + (ordered ? "orden," : "") + "id_multimedia", id);
+    }
+
     public List<Registro> documents(int id) {
         return jdbc.list("SELECT id_documento AS id,tipo,nombre,archivo,fecha FROM documentos "
                 + "WHERE id_solicitud=? ORDER BY fecha,id_documento", id);

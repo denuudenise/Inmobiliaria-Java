@@ -39,8 +39,13 @@ public final class ConsultasSQL {
     private static PreparedStatement prepare(Connection c, String sql, Object... args)
             throws SQLException {
         var p = c.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
-        for (int i = 0; i < args.length; i++) p.setObject(i + 1, args[i]);
-        return p;
+        try {
+            for (int i = 0; i < args.length; i++) p.setObject(i + 1, args[i]);
+            return p;
+        } catch (SQLException | RuntimeException e) {
+            try { p.close(); } catch (SQLException closeError) { e.addSuppressed(closeError); }
+            throw e;
+        }
     }
 
     public static int exec(Connection c, String sql, Object... args) throws SQLException {

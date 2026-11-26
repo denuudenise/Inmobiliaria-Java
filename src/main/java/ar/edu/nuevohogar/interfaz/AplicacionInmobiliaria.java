@@ -63,6 +63,40 @@ public final class AplicacionInmobiliaria extends Application {
     private Runnable currentPageReload;
     private MediaPlayer activeMediaPlayer;
     private long pageLoadGeneration;
+    private final java.util.concurrent.ThreadPoolExecutor pageWorkers = new java.util.concurrent.ThreadPoolExecutor(
+            2, 2, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+            new java.util.concurrent.ArrayBlockingQueue<>(1), runnable -> {
+                Thread worker = new Thread(runnable, "carga-seccion-remota");
+                worker.setDaemon(true);
+                return worker;
+            }, new java.util.concurrent.ThreadPoolExecutor.DiscardOldestPolicy());
+    private javafx.concurrent.Task<?> pageTask;
+    private record ImageKey(String uri, int width, int height) {}
+    private final Map<ImageKey, Image> imageCache = new LinkedHashMap<>(24, 0.75f, true);
+
+    private Image cachedImage(String uri, int width, int height) {
+        ImageKey key = new ImageKey(uri, width, height);
+        Image existing = imageCache.get(key);
+        if (existing != null && !existing.isError()) return existing;
+        Image loaded = new Image(uri, width, height, true, true, true);
+        imageCache.put(key, loaded);
+        if (imageCache.size() > 24) imageCache.remove(imageCache.keySet().iterator().next());
+        return loaded;
+    }
+
+    @Override public void stop() {
+        cancelPageLoad();
+        pageWorkers.shutdownNow();
+        stopActiveMedia();
+        imageCache.clear();
+        if (service != null) service.db.close();
+    }
+
+    private void cancelPageLoad() {
+        if (pageTask != null) pageTask.cancel(true);
+        pageTask = null;
+        pageWorkers.getQueue().clear();
+    }
 
     @Override
     public void start(Stage stage) {
@@ -90,10 +124,15 @@ public final class AplicacionInmobiliaria extends Application {
                 new javafx.concurrent.Task<>() {
                     protected AppInitialization call() throws Exception {
                         ConexionBaseDatos db = new ConexionBaseDatos();
-                        db.initialize();
-                        DatosDemostracion.seed(db);
-                        ServicioInmobiliaria initialized = new ServicioInmobiliaria(db);
-                        return new AppInitialization(initialized, initialized.needsAdmin());
+                        try {
+                            db.initialize();
+                            DatosDemostracion.seed(db);
+                            ServicioInmobiliaria initialized = new ServicioInmobiliaria(db);
+                            return new AppInitialization(initialized, initialized.needsAdmin());
+                        } catch (Exception error) {
+                            db.close();
+                            throw error;
+                        }
                     }
                 };
         init.setOnSucceeded(
@@ -370,6 +409,7 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void page(String title, String subtitle) {
+        cancelPageLoad();
         pageLoadGeneration++;
         stopActiveMedia();
         activePage = title;
@@ -397,9 +437,8 @@ public final class AplicacionInmobiliaria extends Application {
         task.setOnFailed(event -> {
             if (generation == pageLoadGeneration) error(task.getException());
         });
-        Thread worker = new Thread(task, "carga-seccion-remota");
-        worker.setDaemon(true);
-        worker.start();
+        pageTask = task;
+        pageWorkers.execute(task);
     }
 
     private static VBox card(Node... nodes) {
@@ -555,6 +594,7 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void login() {
+        cancelPageLoad();
         pageLoadGeneration++;
         activePage = "Iniciar sesión";
         root.setTop(loginHeader());
@@ -730,7 +770,7 @@ public final class AplicacionInmobiliaria extends Application {
         frame.setMinHeight(172); frame.setPrefHeight(172); frame.setMaxHeight(172);
         frame.getStyleClass().add("catalog-photo");
         List<String> paths = propertyImageUris(property);
-        Image photo = paths.isEmpty() ? null : new Image(paths.getFirst(), 1200, 800, true, true, true);
+        Image photo = paths.isEmpty() ? null : cachedImage(paths.getFirst(), 1200, 800);
         if (photo != null && !photo.isError()) {
             ImageView view = new ImageView(photo);
             view.fitWidthProperty().bind(frame.widthProperty()); view.setFitHeight(172);
@@ -798,7 +838,7 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private Node photoFrame(String uri, double width, double height) {
-        Image image = new Image(uri, width, height, true, true, true);
+        Image image = cachedImage(uri, (int) width, (int) height);
         if (image.isError()) return house(width, height, uri.hashCode());
         ImageView view = new ImageView(image);
         view.setFitWidth(width);
@@ -2163,6 +2203,7 @@ public final class AplicacionInmobiliaria extends Application {
     }
 
     private void ownerRequestForm() {
+        var envio = new ar.edu.nuevohogar.backend.EnvioSolicitud();
         page("Solicitar publicación", "Enviá los datos del inmueble para que un agente lo revise y administración decida su publicación.");
         Formulario f = new Formulario();
         f.text("titulo", "Título *", "");
@@ -2347,20 +2388,47 @@ public final class AplicacionInmobiliaria extends Application {
                     if (!missing.isEmpty())
                         throw new IllegalArgumentException("Antes de enviar, completá o revisá:\n• "
                                 + String.join("\n• ", missing));
-                    int id = service.createOwnerRequest(f.values(), proposed, checked(features),
-                            missingPlans.isSelected(), missingDeed.isSelected(),
-                            documentNotes.getText().trim());
-                    try {
-                        for (Path path : pendingMedia)
-                            service.attachOwnerRequest(id, path, path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".mp4") ? "Video" : "Imagen");
-                        for (Map.Entry<Path, String> doc : pendingDocuments.entrySet())
-                            service.attachOwnerRequest(id, doc.getKey(), doc.getValue());
-                        for (ServicioInmobiliaria.PropertyTax tax : taxes) service.saveOwnerRequestTax(id, tax);
-                    } catch (Exception error) {
-                        throw new IllegalArgumentException("La solicitud quedó creada, pero no se pudo adjuntar todo: " + error.getMessage(), error);
-                    }
-                    ownerRequestsPage();
-                    info("La solicitud quedó enviada para revisión.");
+                    Map<String, String> submitted = Map.copyOf(f.values());
+                    Set<Integer> submittedFeatures = Set.copyOf(checked(features));
+                    boolean plansMissing = missingPlans.isSelected(), deedMissing = missingDeed.isSelected();
+                    String notes = documentNotes.getText().trim();
+                    List<ar.edu.nuevohogar.backend.EnvioSolicitud.Paso> steps = new ArrayList<>();
+                    for (Path path : pendingMedia)
+                        steps.add(id -> service.attachOwnerRequest(id, path,
+                                path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".mp4") ? "Video" : "Imagen"));
+                    pendingDocuments.forEach((path, type) -> steps.add(id -> service.attachOwnerRequest(id, path, type)));
+                    for (ServicioInmobiliaria.PropertyTax tax : taxes) steps.add(id -> service.saveOwnerRequestTax(id, tax));
+                    VBox submittedForm = content;
+                    submittedForm.setDisable(true);
+                    validationStatus.setText("Enviando solicitud y archivos…");
+                    javafx.concurrent.Task<Integer> upload = new javafx.concurrent.Task<>() {
+                        @Override protected Integer call() throws Exception {
+                            return envio.enviar(() -> service.createOwnerRequest(submitted, proposed,
+                                    submittedFeatures, plansMissing, deedMissing, notes), steps);
+                        }
+                    };
+                    upload.setOnSucceeded(event -> {
+                        submittedForm.setDisable(false);
+                        if (content == submittedForm) {
+                            ownerRequestsPage();
+                            info("La solicitud quedó enviada para revisión.");
+                        }
+                    });
+                    upload.setOnFailed(event -> {
+                        submittedForm.setDisable(false);
+                        if (envio.creada()) {
+                            // Los datos ya guardados quedan visibles; reintentar continúa los adjuntos.
+                            for (int i = 0; i < submittedForm.getChildren().size() - 1; i++)
+                                submittedForm.getChildren().get(i).setDisable(true);
+                        }
+                        validationStatus.setText(envio.creada()
+                                ? "Solicitud guardada. Pulsá Enviar solicitud para reintentar los adjuntos pendientes."
+                                : "No se pudo guardar la solicitud. Revisá el error e intentá nuevamente.");
+                        error(upload.getException());
+                    });
+                    Thread uploader = new Thread(upload, "envio-solicitud");
+                    uploader.setDaemon(true);
+                    uploader.start();
                 }), secondary("Cancelar", this::propertyList)));
     }
 

@@ -67,6 +67,8 @@ public final class ComprobacionesIntegracion {
     }
 
     public static void main(String[] args) throws Exception {
+        ComprobacionesAuditoria.run();
+        ar.edu.nuevohogar.backend.ComprobacionesMedia.run();
         Runnable[] adminActions = new Runnable[17];
         Arrays.setAll(adminActions, i -> () -> {});
         Runnable[] agentActions = new Runnable[13];
@@ -379,6 +381,21 @@ public final class ComprobacionesIntegracion {
         agent.registrarPagoAlquiler(rentTask, new BigDecimal("500000.00"), java.time.LocalDate.now(), "Efectivo");
         check(admin.cuotasAlquiler(rentalOperation).getFirst().text("estado_cuota").equals("Completada"),
                 "La cuota pasa a pagada al cubrir el importe mensual");
+        try (var workers = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            var startTogether = new java.util.concurrent.CountDownLatch(1);
+            java.util.concurrent.Callable<Boolean> createSamePeriod = () -> {
+                startTogether.await();
+                try {
+                    admin.crearCuotaAlquiler(rentalOperation, rentalPeriod.plusMonths(1),
+                            new BigDecimal("900000.00"), "ARS", java.time.LocalDate.now().plusDays(30));
+                    return true;
+                } catch (IllegalArgumentException duplicate) { return false; }
+            };
+            var first = workers.submit(createSamePeriod);
+            var second = workers.submit(createSamePeriod);
+            startTogether.countDown();
+            check(first.get() != second.get(), "Dos altas simultáneas crean una sola cuota del período");
+        }
         denied(
                 () -> agent.close(pid, cid, 2, new BigDecimal("900000"), BigDecimal.ZERO),
                 "Doble cierre rechazado");
@@ -448,8 +465,10 @@ public final class ComprobacionesIntegracion {
         check(admin.attachments(approvedOwnerProperty, true).size() == 1
                         && admin.propertyTaxes(approvedOwnerProperty).size() == 1,
                 "La documentacion e impuestos de la solicitud pasan a la propiedad");
+        denied(() -> client.createOwnerRequest(ownerRequestData, proposedOffers, Set.of(), true, true, ""),
+                "Documentación faltante exige una explicación");
         int rejectedOwnerRequest = client.createOwnerRequest(ownerRequestData, proposedOffers, Set.of(),
-                true, true, "");
+                true, true, "Escritura y planos en trámite.");
         admin.rejectOwnerRequest(rejectedOwnerRequest, "Falta verificar la titularidad.");
         check(client.ownerRequests().stream().anyMatch(r -> r.id("id_solicitud") == rejectedOwnerRequest
                         && r.id("id_estado_verificacion") == 4),

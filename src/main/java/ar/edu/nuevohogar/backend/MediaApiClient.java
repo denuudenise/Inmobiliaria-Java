@@ -17,12 +17,16 @@ final class MediaApiClient {
     private final String endpoint;
     private final String baseUrl;
     private HttpClient http;
-    private String csrf;
-    private String lastFailure;
+    private volatile String csrf;
+    private volatile String lastFailure;
 
     MediaApiClient(ConexionBaseDatos db) {
-        endpoint = db.mediaApiUrl;
-        baseUrl = db.mediaWebUrl;
+        this(db.mediaApiUrl, db.mediaWebUrl);
+    }
+
+    MediaApiClient(String endpoint, String baseUrl) {
+        this.endpoint = endpoint;
+        this.baseUrl = baseUrl;
         if (!endpoint.isBlank()) {
             URI uri = URI.create(endpoint);
             if (!"https".equalsIgnoreCase(uri.getScheme()) && !isLocal(uri.getHost()))
@@ -62,7 +66,9 @@ final class MediaApiClient {
         String boundary = "----NuevoHogar" + UUID.randomUUID().toString().replace("-", "");
         HttpRequest request = HttpRequest.newBuilder(uri("?action=logout"))
                 .timeout(Duration.ofSeconds(10)).header("Content-Type", "multipart/form-data; boundary=" + boundary)
-                .POST(HttpRequest.BodyPublishers.ofByteArray(field(boundary, "csrf_token", csrf))).build();
+                .POST(HttpRequest.BodyPublishers.concat(
+                        HttpRequest.BodyPublishers.ofByteArray(field(boundary, "csrf_token", csrf)),
+                        HttpRequest.BodyPublishers.ofString("--" + boundary + "--\r\n"))).build();
         try { send(request); } finally { csrf = null; }
     }
 
@@ -74,14 +80,15 @@ final class MediaApiClient {
             ByteArrayOutputStream data = new ByteArrayOutputStream();
             for (String[] pair : new String[][]{{"csrf_token", csrf}, {"target", target},
                     {"id", Integer.toString(id)}, {"type", type}}) data.write(field(boundary, pair[0], pair[1]));
-            String name = source.getFileName().toString().replace("\"", "_");
+            String name = source.getFileName().toString().replaceAll("[\"\r\n]", "_");
             data.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"" + name
                     + "\"\r\nContent-Type: application/octet-stream\r\n\r\n").getBytes(StandardCharsets.UTF_8));
-            Files.copy(source, data);
-            data.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
             HttpRequest request = HttpRequest.newBuilder(uri("?action=upload"))
                     .timeout(Duration.ofSeconds(180)).header("Content-Type", "multipart/form-data; boundary=" + boundary)
-                    .POST(HttpRequest.BodyPublishers.ofByteArray(data.toByteArray())).build();
+                    .POST(HttpRequest.BodyPublishers.concat(
+                            HttpRequest.BodyPublishers.ofByteArray(data.toByteArray()),
+                            HttpRequest.BodyPublishers.ofFile(source),
+                            HttpRequest.BodyPublishers.ofString("\r\n--" + boundary + "--\r\n"))).build();
             send(request);
         } catch (IOException e) {
             throw new IllegalStateException("No se pudo leer el archivo seleccionado.", e);

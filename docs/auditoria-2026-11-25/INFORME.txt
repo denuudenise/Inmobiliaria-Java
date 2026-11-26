@@ -1,0 +1,108 @@
+AUDITORÍA Y CORRECCIONES — NUEVO HOGAR JAVA
+Fecha: 25/11/2026
+Base de trabajo: commit b9f4ac2. Cambios locales, sin commit ni push.
+Proyecto instalado: C:/Users/camii/OneDrive/Desktop/Inmobiliaria-Java
+
+RESULTADO Y LÍMITES
+La aplicación instalada arranca con el runtime portable y la configuración remota. La conexión MySQL, las lecturas y una prueba CRUD técnica con rollback funcionaron contra el servidor. En una copia local del SQL proporcionado se ejecutaron flujos de negocio con datos técnicos. Se corrigieron los errores reproducidos y se midieron mejoras reales.
+Esto no certifica todos los recorridos de producción. La API corregida está preparada en server-api/media.php y en los paquetes de despliegue, pero NO fue publicada en el hosting. No se probó una subida autenticada completa al hosting ni la reproducción audiovisual completa desde una segunda computadora. Esas limitaciones se detallan abajo.
+
+1. RESPALDO Y CONFIGURACIÓN
+Se creó y verificó antes de modificar la app el ZIP:
+C:/Users/camii/OneDrive/Desktop/Respaldos Inmobiliaria-Java/Inmobiliaria-Java-antes-auditoria-20261125-114128.zip
+Se conservó además una copia config-local-*.properties en esa carpeta antes de activar la conexión remota autorizada. No se cambiaron el usuario, la contraseña ni las opciones SSL del servidor. El config.properties activo está ignorado por Git y no se incluye en la nueva distribución.
+La copia de pruebas local se llama nh_auditoria_20261125. No reemplaza la base inmobiliaria de XAMPP. Contiene filas identificadas como AUDITORIA y cuentas técnicas de prueba; no es una base para enviar como producción. El SQL original en Descargas no fue modificado.
+
+2. ERRORES CORREGIDOS
+• Aprobación de solicitudes: faltaba solicitud_multimedia.orden en la base H2 de demostración. El inicio agrega esa columna en H2 de forma repetible. El DAO también tolera esquemas antiguos sin orden, sin alterar bases reales, y conserva el orden en esquemas nuevos.
+• Error real de MariaDB al aprobar: TINYINT(1) podía llegar como Boolean y Registro.id() lo convertía obligatoriamente a Number. Ahora admite ambos tipos. Se reprodujo el fallo con la copia del SQL y se repitió con éxito el flujo corregido.
+• Reintento de envío: un fallo al adjuntar podía crear otra solicitud y repetir archivos ya enviados. EnvioSolicitud conserva el ID y la cola de pasos exitosos/pedientes mientras el formulario sigue abierto. No garantiza idempotencia si se cierra la app o si el servidor confirma una carga y se pierde la respuesta; eso requeriría soporte de idempotencia en la API.
+• Cierre de sesión multimedia: el cuerpo multipart no terminaba con su límite de cierre. Se corrigió y se comprobó contra un receptor HTTP local.
+• Credenciales de agentes en la API: el permiso de archivos se basaba en el agente creador/asignado al propietario e ignoraba la reasignación individual más reciente. El PHP preparado usa el mismo criterio efectivo que Java, tanto al subir como al descargar documentos. Falta desplegarlo.
+• Cuotas de alquiler: dos computadoras podían superar a la vez la comprobación de duplicados. Se bloquea la propiedad dentro de la transacción antes de comprobar/crear la cuota. La prueba concurrente verifica que solo una de dos altas simultáneas prospera.
+• Rutas de almacenamiento: las rutas relativas ahora se resuelven desde la carpeta del config.properties seleccionado, evitando que dependan del directorio desde el que se lanzó el portable.
+• Recursos JDBC: se cierra el PreparedStatement si falla la asignación de parámetros; se cierran conexiones del pool al terminar la app o si falla la inicialización.
+• Prueba desactualizada: un caso de rechazo de publicación enviaba documentos faltantes sin explicación, contradiciendo la validación vigente. Se corrigió el dato de prueba y se agregó una comprobación que exige la explicación; no se relajó la validación.
+
+3. OPTIMIZACIONES
+• HikariCP reutiliza hasta cuatro conexiones físicas tanto con MySQL como con MariaDB, con tiempos de espera y cierre explícitos. Mantiene el driver y las opciones SSL existentes. No guarda permisos de usuario en caché.
+• Los trece contadores del panel administrativo se consultan juntos: el panel pasa de veinte consultas de datos a ocho.
+• La navegación asíncrona usa dos trabajadores y una cola de espera acotada; cancela solicitudes de páginas abandonadas y evita mostrar una respuesta vieja sobre una pantalla nueva.
+• El envío de solicitudes y sus archivos se ejecuta fuera del hilo gráfico y bloquea el doble envío desde el formulario mientras está en curso.
+• Las cargas HTTP transmiten el archivo desde disco; ya no copian todo el video a un arreglo de bytes adicional.
+• Caché acotada a 24 imágenes por URI y tamaño. Conserva los originales; no comprime ni sustituye las imágenes del servidor. Una imagen fallida puede volver a cargarse.
+• El paquete Maven incluye ahora un JAR portable reproducible con sus dependencias, servicios JDBC y bibliotecas nativas JavaFX.
+No se agregó paginación general ni índices de producción sin una prueba de volumen que lo justifique. Persisten operaciones de otros formularios que usan llamadas síncronas: su migración completa requiere pruebas adicionales de cada flujo. No se afirma que todas las acciones de la interfaz hayan quedado asíncronas.
+
+4. PROGRAMACIÓN ORIENTADA A OBJETOS
+Encapsulamiento: Usuario mantiene atributos privados y finales, expone métodos de lectura y una representación pública sin el hash. EnvioSolicitud protege su ID y cola de pasos. La configuración de conexión y el pool son internos. Los modelos inmutables no necesitan setters que permitan estados inconsistentes.
+Herencia: UsuarioDAO y PropiedadDAO heredan de DaoLectura<T>, que reúne la ejecución y transformación de consultas tipadas. AplicacionInmobiliaria hereda de Application y Formulario de GridPane; Registro hereda de LinkedHashMap.
+Polimorfismo: DaoLectura.select/first invocan this::map y ejecutan la implementación @Override correspondiente a UsuarioDAO o PropiedadDAO. JavaFX llama a start/stop de la aplicación mediante el contrato Application. Los pasos del envío se ejecutan mediante la interfaz Paso.
+Abstracción: DaoLectura<T> es una clase abstracta; cada DAO define cómo reconstruir su entidad. ConexionBaseDatos.Work<T> representa una unidad de trabajo transaccional y EnvioSolicitud.Paso una operación pendiente. ConexionBaseDatos implementa AutoCloseable.
+Composición y asociaciones: ServicioInmobiliaria coordina sus DAOs, la conexión y el cliente multimedia; las propiedades se relacionan con usuarios, operaciones y adjuntos por sus identificadores. No se inventó una jerarquía Persona/Administrador/Agente que no coincida con el modelo actual.
+
+5. ARQUITECTURA Y VALIDACIONES
+Las pantallas invocan al servicio; no se encontraron sentencias SQL directamente en la capa gráfica. Los DAOs y ConsultasSQL ejecutan SQL parametrizado. Las operaciones de negocio comprueban roles y muchas se agrupan en transacciones. Las pruebas abarcan duplicados, campos obligatorios, importes/superficies, archivos privados, asignaciones, aprobación y restricciones de roles.
+Todavía hay SQL de negocio escrito dentro de ServicioInmobiliaria y ejecutado mediante ConsultasSQL; no se hizo una reestructuración masiva de todos los CRUD. La separación servicio/DAO es mejorable y no se presenta como una arquitectura completamente desacoplada.
+
+6. PRUEBAS EJECUTADAS
+• Maven package con Java 27, compilación release 25: correcto. Incluye 108 comprobaciones de integración H2.
+• Regresiones adicionales: conversión Boolean/Number; reintentos sin duplicados; esquemas multimedia con/sin orden; login/upload/logout HTTP contra receptor local que comprueba contenido y cierre multipart.
+• MariaDB/XAMPP, copia del SQL entregado: registro y login; alta/edición de propiedad y ofertas; almacenamiento/lectura de documento privado; impuestos; asignación y aprobación de solicitud; transferencia de documentos; acceso privado rechazado sin sesión; auditoría y logout. Todo correcto tras arreglar TINYINT.
+• Servidor MySQL: INSERT, SELECT, UPDATE y DELETE de un edificio técnico dentro de una transacción con rollback. No quedó registro persistente. Esta prueba no equivale a un alta completa de usuario/propiedad en producción.
+• Pool remoto: 16 consultas concurrentes, autocommit y readOnly restaurados al devolver la conexión. Correcto.
+• API remota sin sesión: HTTP 401. Un video y dos imágenes respondieron HTTP 206, con Content-Type video/mp4 e image/jpeg. Se leyeron muestras limitadas; esto no verifica el códec completo ni una reproducción completa.
+• PHP preparado: php -l sin errores de sintaxis. El cambio de permisos requiere comprobación autenticada después de publicarlo.
+• JavaFX: recorrido automatizado y 24 capturas de pantallas de administrador, agente y cliente con datos aislados. Comprueba apertura/renderizado, no cada botón ni todas las combinaciones posibles.
+• Ejecutable instalado: arranque con el Java del portable y la configuración remota; llegó al formulario de ingreso correctamente. La ventana de prueba se cerró automáticamente.
+• ZIP generados: integridad de cada entrada comprobada; sin config.properties activo y con ejecutable actualizado. Las instrucciones de configuración están en config.example.properties.
+Los avisos de consola de JavaFX por classpath sin módulos y de SLF4J sin proveedor no impidieron estas pruebas; se conservan en la evidencia.
+
+7. RENDIMIENTO MEDIDO
+Mediana de 7 repeticiones, después de 2 calentamientos por operación, en la misma computadora. Unidad: milisegundos. Los CSV conservan cada medición.
+                          REMOTO ANTES   REMOTO DESPUÉS   LOCAL ANTES   LOCAL DESPUÉS
+Conexión + validación          1970,680          173,037         8,042           0,393
+Panel administrador           5348,500         1412,529        38,430          26,296
+Consulta de propiedades       2140,500          190,443        21,128          16,773
+Consulta de usuarios          2039,741          180,020         8,431           1,198
+El panel mejoró aproximadamente 74%; las consultas de propiedades/usuarios aproximadamente 91%. Estas cifras miden las consultas y la construcción de sus datos, no el renderizado completo de la ventana. La primera conexión nueva todavía necesita el handshake remoto: reutilizar conexiones no elimina la latencia de la red ni acelera por sí solo el servidor.
+El login de prueba local midió 310,330 ms y el alta de propiedad local 54,243 ms en la ejecución corregida. Son mediciones individuales, sin comparación equivalente previa; no se calculan porcentajes de mejora para ellas.
+No hay mediciones comparables antes/después de login remoto, altas remotas completas, carga visual de videos o transferencia multimedia autenticada. No se inventaron tiempos para cubrir esos renglones.
+Documentación de la biblioteca de pooling: https://github.com/brettwooldridge/HikariCP
+
+8. PENDIENTE PARA CERRAR UNA VALIDACIÓN DE PRODUCCIÓN
+• Publicar server-api/media.php en /Inmobiliaria/api/media.php y comprobar permisos con agentes reasignados y usuarios de prueba. No hay acceso de despliegue al hosting en esta sesión.
+• Probar login de una cuenta de prueba de la app contra el hosting multimedia, subida/descarga/eliminación controlada y reproducción completa en otra computadora. No se usaron contraseñas de clientes reales para hacerlo.
+• Verificar recuperación por correo, límites PHP del hosting, archivos inexistentes, desconexiones y reintentos después de reiniciar la aplicación mediante recorridos completos. No se certificaron esos servicios externos.
+• Prueba de volumen para paginación, índices y memoria. La mejora medida no demuestra rendimiento con miles de propiedades o muchos escritorios simultáneos.
+• El escritorio sigue conectándose por JDBC a MySQL. El pool no reemplaza una API de negocio ni elimina la necesidad de proteger las credenciales y limitar los permisos de la cuenta SQL.
+• Los ZIP anteriores incluían configuración privada. Los nuevos ya no la incorporan, pero el respaldo y eventualmente el historial Git conservan los archivos anteriores. No se cambiaron ni rotaron contraseñas del equipo.
+
+9. CÓMO REPRODUCIR Y VOLVER ATRÁS
+Compilar con JDK compatible con release 25: mvn package. El resultado portable se genera en target/nuevo-hogar-1.0.0-portable.jar. Maven ejecuta las pruebas de src/test; usar solo package evita ejecutar dos veces la misma fase en la misma invocación.
+Para iniciar esta PC: NuevoHogar.bat en la carpeta del proyecto. El runtime toma la configuración del directorio padre; ahora las rutas relativas se interpretan respecto de ese config.properties.
+Los CSV y registros de esta auditoría acompañan este informe. El programa de prueba MariaDB restringe explícitamente las escrituras de negocio a nh_auditoria_20261125. La prueba remota de CRUD revierte su transacción.
+Para volver a XAMPP, cerrar la app y restaurar la copia config-local-*.properties como config.properties. Para volver al estado completo anterior, usar el ZIP de respaldo, conservando antes cualquier trabajo posterior.
+No se creó ningún commit ni se subieron cambios a GitHub.
+
+10. ARCHIVOS FUENTE MODIFICADOS O AGREGADOS
+src/main/java/ar/edu/nuevohogar/backend/EnvioSolicitud.java
+src/main/java/ar/edu/nuevohogar/backend/MediaApiClient.java
+src/main/java/ar/edu/nuevohogar/backend/ServicioInmobiliaria.java
+src/main/java/ar/edu/nuevohogar/interfaz/AplicacionInmobiliaria.java
+src/main/java/ar/edu/nuevohogar/modelo/Registro.java
+src/main/java/ar/edu/nuevohogar/persistencia/dao/ConexionBaseDatos.java
+src/main/java/ar/edu/nuevohogar/persistencia/dao/ConsultasSQL.java
+src/main/java/ar/edu/nuevohogar/persistencia/dao/DaoLectura.java
+src/main/java/ar/edu/nuevohogar/persistencia/dao/PanelAdministradorDAO.java
+src/main/java/ar/edu/nuevohogar/persistencia/dao/PropiedadDAO.java
+src/main/java/ar/edu/nuevohogar/persistencia/dao/SolicitudPropiedadDAO.java
+src/main/java/ar/edu/nuevohogar/persistencia/dao/UsuarioDAO.java
+src/main/resources/db/demo.sql
+src/test/java/ar/edu/nuevohogar/ComprobacionesAuditoria.java
+src/test/java/ar/edu/nuevohogar/ComprobacionesIntegracion.java
+src/test/java/ar/edu/nuevohogar/backend/ComprobacionesMedia.java
+server-api/media.php
+pom.xml
+
+También se actualizaron los tres JAR instalados y los paquetes de distribución portables y de la API.

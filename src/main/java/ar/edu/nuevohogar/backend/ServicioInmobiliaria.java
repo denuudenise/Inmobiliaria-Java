@@ -31,7 +31,7 @@ public final class ServicioInmobiliaria {
     private final GestionComercialDAO gestionDao;
     private final MultimediaDAO multimediaDao;
     private final MediaApiClient mediaApi;
-    private Integer sessionId;
+    private volatile Integer sessionId;
     private static final String PROPERTY =
             "SELECT p.*,t.nombre AS tipo,e.nombre AS verificacion,c.nombre AS"
                 + " comercial,CASE WHEN u.id_rol=1 THEN 'Admin' ELSE CONCAT(u.nombre,' ',u.apellido) END AS propietario FROM propiedades p"
@@ -922,7 +922,7 @@ public final class ServicioInmobiliaria {
                         property, offer.id("id_tipo_transaccion"), offer.money("precio"), offer.text("moneda"), offer.get("precio_minimo"));
             for (Registro feature : list(c, "SELECT id_caracteristica FROM solicitud_caracteristicas WHERE id_solicitud=?", id))
                 exec(c, "INSERT INTO propiedad_caracteristicas(id_propiedad,id_caracteristica) VALUES(?,?)", property, feature.id("id_caracteristica"));
-            for (Registro media : list(c, "SELECT url_archivo,tipo,orden FROM solicitud_multimedia WHERE id_solicitud=? ORDER BY orden,id_multimedia", id))
+            for (Registro media : SolicitudPropiedadDAO.mediaForApproval(c, id))
                 exec(c, "INSERT INTO propiedad_multimedia(id_propiedad,url_archivo,tipo,orden) VALUES(?,?,?,?)",
                         property, media.text("url_archivo"), media.text("tipo"), media.id("orden"));
             exec(c, "UPDATE documentos SET id_propiedad=?,id_solicitud=NULL WHERE id_solicitud=?", property, id);
@@ -1260,6 +1260,8 @@ public final class ServicioInmobiliaria {
             throw new IllegalArgumentException("Revisá el período, el vencimiento y el importe de la cuota.");
         String prefix = RENT_LEDGER_MARKER + "|" + operationId + "|" + period;
         return db.transaction(c -> {
+            // Serializa altas de cuotas del mismo alquiler incluso desde distintas computadoras.
+            list(c, "SELECT id_propiedad FROM propiedades WHERE id_propiedad=? FOR UPDATE", rental.id("id_propiedad"));
             List<Registro> existing = list(c, "SELECT id_tarea,detalle FROM tareas_seguimiento "
                     + "WHERE id_propiedad=? AND id_cliente=?", rental.id("id_propiedad"), rental.id("id_cliente"));
             if (existing.stream().anyMatch(row -> row.text("detalle").startsWith(prefix + "|")))

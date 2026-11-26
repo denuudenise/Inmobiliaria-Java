@@ -55,15 +55,14 @@ function media_password_matches(string $password, string $hash): bool
 function media_context(PDO $db, string $target, int $id, array $user): array
 {
     if ($target === 'propiedad') {
-        $q = $db->prepare('SELECT p.id_propietario,p.id_agente_creador,p.id_estado_verificacion,p.id_estado_comercial,c.id_agente_asignado '
+        $q = $db->prepare('SELECT p.id_propietario,p.id_agente_creador,p.id_estado_verificacion,p.id_estado_comercial,c.id_agente_asignado,COALESCE((SELECT ha.agente_nuevo FROM historial_asignaciones ha WHERE ha.tipo_entidad=\'PROPIEDAD\' AND ha.id_entidad=p.id_propiedad ORDER BY ha.fecha DESC,ha.id_asignacion DESC LIMIT 1),c.id_agente_asignado,p.id_agente_creador) AS agente_responsable '
             . 'FROM propiedades p LEFT JOIN clientes c ON c.id_cliente=p.id_propietario WHERE p.id_propiedad=?');
         $q->execute([$id]);
         $row = $q->fetch();
         if (!$row) throw new RuntimeException('La propiedad no existe.');
         $allowed = $user['role'] === 'Administrador'
             || ($user['role'] === 'Cliente' && (int)$row['id_propietario'] === (int)$user['id'])
-            || ($user['role'] === 'Agente' && ((int)$row['id_agente_creador'] === (int)$user['id']
-                || (int)$row['id_agente_asignado'] === (int)$user['id']));
+            || ($user['role'] === 'Agente' && (int)$row['agente_responsable'] === (int)$user['id']);
         if (!$allowed) throw new RuntimeException('No tenés acceso a esta propiedad.');
         return $row;
     }
@@ -134,7 +133,7 @@ if ($action === 'download') {
     $documentId = (int)($_GET['id'] ?? 0);
     if ($documentId < 1) media_json(400, ['error' => 'Documento inválido.']);
     $db = Database::connection();
-    $q = $db->prepare('SELECT d.*,p.id_propietario,p.id_agente_creador,c.id_agente_asignado,'
+    $q = $db->prepare('SELECT d.*,p.id_propietario,p.id_agente_creador,c.id_agente_asignado,COALESCE((SELECT ha.agente_nuevo FROM historial_asignaciones ha WHERE ha.tipo_entidad=\'PROPIEDAD\' AND ha.id_entidad=p.id_propiedad ORDER BY ha.fecha DESC,ha.id_asignacion DESC LIMIT 1),c.id_agente_asignado,p.id_agente_creador) AS agente_responsable,'
         . 's.id_cliente AS solicitante,s.id_agente AS agente_solicitud '
         . 'FROM documentos d LEFT JOIN propiedades p ON p.id_propiedad=d.id_propiedad '
         . 'LEFT JOIN clientes c ON c.id_cliente=p.id_propietario '
@@ -144,11 +143,10 @@ if ($action === 'download') {
     if (!$doc) media_json(404, ['error' => 'Documento no encontrado.']);
     $isProperty = $doc['id_propiedad'] !== null;
     $owner = (int)($isProperty ? $doc['id_propietario'] : $doc['solicitante']);
-    $creator = (int)($isProperty ? $doc['id_agente_creador'] : $doc['agente_solicitud']);
-    $assigned = (int)($isProperty ? $doc['id_agente_asignado'] : $doc['agente_solicitud']);
+    $assigned = (int)($isProperty ? $doc['agente_responsable'] : $doc['agente_solicitud']);
     $allowed = $user['role'] === 'Administrador'
         || ($user['role'] === 'Cliente' && $owner === (int)$user['id'])
-        || ($user['role'] === 'Agente' && ((int)$user['id'] === $creator || (int)$user['id'] === $assigned));
+        || ($user['role'] === 'Agente' && (int)$user['id'] === $assigned);
     if (!$allowed) media_json(403, ['error' => 'No tenés permiso para ver este documento.']);
     $filename = basename((string)$doc['archivo']);
     if (str_contains($filename, '..') || !preg_match('/\.(pdf|jpe?g|png|webp)$/i', $filename))

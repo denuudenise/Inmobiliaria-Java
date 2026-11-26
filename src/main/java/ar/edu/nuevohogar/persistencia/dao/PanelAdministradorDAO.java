@@ -66,20 +66,22 @@ public final class PanelAdministradorDAO {
                     + " FROM auditoria a JOIN usuarios u ON u.id_usuario=a.id_usuario"
                     + " ORDER BY a.fecha DESC,a.id_evento DESC LIMIT 6");
 
+        // Un viaje a la base para los trece contadores del panel.
+        Registro counts = ConsultasSQL.list(c, "SELECT (SELECT COUNT(*) FROM clientes) AS n0,(SELECT COUNT(*) FROM usuarios WHERE id_rol=2 AND activo=1) AS n1,(SELECT COUNT(*) FROM usuarios WHERE activo=1) AS n2,(SELECT COUNT(*) FROM propiedades) AS n3,(SELECT COUNT(*) FROM propiedades WHERE id_estado_verificacion=3) AS n4,(SELECT COUNT(*) FROM propiedades WHERE id_estado_verificacion=2) AS n5,(SELECT COUNT(*) FROM propiedades WHERE id_estado_verificacion=4) AS n6,(SELECT COUNT(*) FROM propiedades WHERE id_estado_comercial=3) AS n7,(SELECT COUNT(*) FROM propiedades WHERE id_estado_comercial=4) AS n8,(SELECT COUNT(*) FROM publicaciones WHERE estado='Pendiente') AS n9,(SELECT COUNT(*) FROM propiedades_cerradas) AS n10,(SELECT COUNT(*) FROM solicitudes_publicacion WHERE id_estado_verificacion=2) AS n11,(SELECT COUNT(*) FROM contactos WHERE tipo='Consulta' AND estado='Pendiente') AS n12").getFirst();
         return new DatosPanelAdministrador(
-                count(c, "SELECT COUNT(*) AS cantidad FROM clientes"),
-                count(c, "SELECT COUNT(*) AS cantidad FROM usuarios WHERE id_rol=2 AND activo=1"),
-                count(c, "SELECT COUNT(*) AS cantidad FROM usuarios WHERE activo=1"),
-                count(c, "SELECT COUNT(*) AS cantidad FROM propiedades"),
-                count(c, "SELECT COUNT(*) AS cantidad FROM propiedades WHERE id_estado_verificacion=3"),
-                count(c, "SELECT COUNT(*) AS cantidad FROM propiedades WHERE id_estado_verificacion=2"),
-                count(c, "SELECT COUNT(*) AS cantidad FROM propiedades WHERE id_estado_verificacion=4"),
-                count(c, "SELECT COUNT(*) AS cantidad FROM propiedades WHERE id_estado_comercial=3"),
-                count(c, "SELECT COUNT(*) AS cantidad FROM propiedades WHERE id_estado_comercial=4"),
-                count(c, "SELECT COUNT(*) AS cantidad FROM publicaciones WHERE estado='Pendiente'"),
-                count(c, "SELECT COUNT(*) AS cantidad FROM propiedades_cerradas"),
-                count(c, "SELECT COUNT(*) AS cantidad FROM solicitudes_publicacion WHERE id_estado_verificacion=2"),
-                count(c, "SELECT COUNT(*) AS cantidad FROM contactos WHERE tipo='Consulta' AND estado='Pendiente'"),
+                ((Number) counts.get("n0")).longValue(),
+                ((Number) counts.get("n1")).longValue(),
+                ((Number) counts.get("n2")).longValue(),
+                ((Number) counts.get("n3")).longValue(),
+                ((Number) counts.get("n4")).longValue(),
+                ((Number) counts.get("n5")).longValue(),
+                ((Number) counts.get("n6")).longValue(),
+                ((Number) counts.get("n7")).longValue(),
+                ((Number) counts.get("n8")).longValue(),
+                ((Number) counts.get("n9")).longValue(),
+                ((Number) counts.get("n10")).longValue(),
+                ((Number) counts.get("n11")).longValue(),
+                ((Number) counts.get("n12")).longValue(),
                 asMap(propertyStates),
                 asMap(propertyTypes),
                 asMap(requestStates),
@@ -113,9 +115,6 @@ public final class PanelAdministradorDAO {
         }
     }
 
-    private long count(java.sql.Connection c, String sql) throws java.sql.SQLException {
-        return ConsultasSQL.list(c, sql).getFirst().id("cantidad");
-    }
 
     private static Map<String, Long> asMap(List<Registro> rows) {
         Map<String, Long> values = new LinkedHashMap<>();

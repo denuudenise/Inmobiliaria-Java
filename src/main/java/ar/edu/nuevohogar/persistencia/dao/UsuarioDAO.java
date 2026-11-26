@@ -9,27 +9,22 @@ import java.util.Locale;
 import java.util.Optional;
 
 /** Consultas de persistencia de la entidad Usuario. */
-public final class UsuarioDAO {
-    private final ConsultasSQL jdbc;
+public final class UsuarioDAO extends DaoLectura<Usuario> {
 
     public UsuarioDAO(ConexionBaseDatos database) {
-        jdbc = new ConsultasSQL(database);
+        super(database);
     }
 
+    @Override protected Usuario map(Registro row) { return Usuario.from(row); }
+
     public Optional<Usuario> findActiveByEmail(String email) {
-        return jdbc.list(
+        return first(
                         "SELECT * FROM usuarios WHERE LOWER(email)=? AND activo=1",
-                        email.trim().toLowerCase(Locale.ROOT))
-                .stream()
-                .findFirst()
-                .map(Usuario::from);
+                        email.trim().toLowerCase(Locale.ROOT));
     }
 
     public Optional<Usuario> findActiveById(int id) {
-        return jdbc.list("SELECT * FROM usuarios WHERE id_usuario=? AND activo=1", id)
-                .stream()
-                .findFirst()
-                .map(Usuario::from);
+        return first("SELECT * FROM usuarios WHERE id_usuario=? AND activo=1", id);
     }
 
     public static int insert(

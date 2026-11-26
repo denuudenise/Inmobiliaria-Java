@@ -233,6 +233,7 @@ CREATE TABLE IF NOT EXISTS solicitud_multimedia (
  fecha_carga TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
  FOREIGN KEY(id_solicitud) REFERENCES solicitudes_publicacion(id_solicitud) ON DELETE CASCADE
 );
+ALTER TABLE solicitud_multimedia ADD COLUMN IF NOT EXISTS orden INT NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS solicitud_ofertas (
  id_solicitud INT NOT NULL, id_tipo_transaccion INT NOT NULL,
  precio DECIMAL(12,2) NOT NULL, moneda VARCHAR(3) NOT NULL,

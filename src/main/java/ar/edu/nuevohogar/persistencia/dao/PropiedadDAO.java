@@ -11,7 +11,7 @@ import java.util.Optional;
 import java.util.Set;
 
 /** Consultas de lectura y búsqueda de propiedades. */
-public final class PropiedadDAO {
+public final class PropiedadDAO extends DaoLectura<Propiedad> {
     private static final String SELECT =
             "SELECT p.*,t.nombre AS tipo,e.nombre AS verificacion,c.nombre AS comercial,"
                 + "CASE WHEN u.id_rol=1 THEN 'Admin' ELSE CONCAT(u.nombre,' ',u.apellido) END AS propietario,"
@@ -24,11 +24,12 @@ public final class PropiedadDAO {
                 + "LEFT JOIN clientes cl ON cl.id_cliente=p.id_propietario "
                 + "LEFT JOIN usuarios ua ON ua.id_usuario=" + responsibleAgentSql("p") + " ";
 
-    private final ConsultasSQL jdbc;
 
     public PropiedadDAO(ConexionBaseDatos database) {
-        jdbc = new ConsultasSQL(database);
+        super(database);
     }
+
+    @Override protected Propiedad map(Registro row) { return new Propiedad(row); }
 
     public List<Propiedad> search(
             boolean catalog,
@@ -94,14 +95,14 @@ public final class PropiedadDAO {
             args.add(feature);
         }
         sql.append(" ORDER BY p.fecha_creacion DESC,p.id_propiedad DESC");
-        return jdbc.list(sql.toString(), args.toArray()).stream().map(Propiedad::new).toList();
+        return select(sql.toString(), args.toArray());
     }
 
     public List<Propiedad> findForAgent(int agent) {
-        return jdbc.list(SELECT
+        return select(SELECT
                         + " WHERE " + responsibleAgentSql("p") + "=?"
                         + " ORDER BY p.fecha_creacion DESC,p.id_propiedad DESC",
-                agent).stream().map(Propiedad::new).toList();
+                agent);
     }
 
     /** Agente efectivo: asignación individual más reciente, responsable del propietario o creador. */
@@ -114,10 +115,7 @@ public final class PropiedadDAO {
     }
 
     public Optional<Propiedad> findById(int id) {
-        return jdbc.list(SELECT + " WHERE p.id_propiedad=?", id)
-                .stream()
-                .findFirst()
-                .map(Propiedad::new);
+        return first(SELECT + " WHERE p.id_propiedad=?", id);
     }
 
     public static int insert(Connection connection, Propiedad.Datos data) throws SQLException {

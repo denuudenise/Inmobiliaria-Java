@@ -4,6 +4,7 @@
   <groupId>ar.edu.nuevohogar</groupId><artifactId>nuevo-hogar</artifactId><version>1.0.0</version>
   <properties><maven.compiler.release>25</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding></properties>
   <dependencies>
+    <dependency><groupId>com.zaxxer</groupId><artifactId>HikariCP</artifactId><version>7.1.0</version></dependency>
     <dependency><groupId>org.openjfx</groupId><artifactId>javafx-controls</artifactId><version>27</version></dependency>
     <dependency><groupId>org.openjfx</groupId><artifactId>javafx-media</artifactId><version>27</version></dependency>
     <dependency><groupId>org.mariadb.jdbc</groupId><artifactId>mariadb-java-client</artifactId><version>3.5.7</version></dependency>
@@ -12,6 +13,20 @@
     <dependency><groupId>org.mindrot</groupId><artifactId>jbcrypt</artifactId><version>0.4</version></dependency>
   </dependencies>
   <build><plugins>
+    <plugin>
+      <groupId>org.apache.maven.plugins</groupId><artifactId>maven-shade-plugin</artifactId><version>3.6.1</version>
+      <executions><execution><phase>package</phase><goals><goal>shade</goal></goals><configuration>
+        <createDependencyReducedPom>false</createDependencyReducedPom>
+        <shadedArtifactAttached>true</shadedArtifactAttached><shadedClassifierName>portable</shadedClassifierName>
+        <filters><filter><artifact>*:*</artifact><excludes>
+          <exclude>META-INF/*.SF</exclude><exclude>META-INF/*.RSA</exclude><exclude>META-INF/*.DSA</exclude><exclude>module-info.class</exclude>
+        </excludes></filter></filters>
+        <transformers>
+          <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+          <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer"><mainClass>ar.edu.nuevohogar.Main</mainClass></transformer>
+        </transformers>
+      </configuration></execution></executions>
+    </plugin>
     <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.15.0</version></plugin>
     <plugin><groupId>org.openjfx</groupId><artifactId>javafx-maven-plugin</artifactId><version>0.0.8</version><configuration><mainClass>ar.edu.nuevohogar.Main</mainClass></configuration></plugin>
     <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-jar-plugin</artifactId><version>3.4.2</version><configuration><archive><manifest><mainClass>ar.edu.nuevohogar.Main</mainClass></manifest></archive></configuration></plugin>

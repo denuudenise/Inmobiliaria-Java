@@ -12,6 +12,8 @@ public class Registro extends LinkedHashMap<String, Object> {
 
     public int id(String key) {
         Object v = get(key);
+        // MySQL/MariaDB pueden devolver TINYINT(1) como Boolean en lugar de Number.
+        if (v instanceof Boolean flag) return flag ? 1 : 0;
         return v == null ? 0 : ((Number) v).intValue();
     }
 
